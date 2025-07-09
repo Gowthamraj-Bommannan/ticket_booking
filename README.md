@@ -3,7 +3,11 @@
 A modular, production-ready train booking system built with Django and Django REST Framework. This project supports robust user management, train and station administration, route planning, booking workflows, and secure authentication, with a focus on clean architecture, validation, and structured logging.
 
 ## Features
-
+  - Role-based access control: admin, station master, and regular user.
+  - Admin approval workflow for staff or station master accounts.
+  - Enforce business rules: unique sequences, increasing distances, valid timings, and only active trains/stations.
+  - Centralized exception handler for all API errors.
+  - Standardized error codes and messages for all business and validation errors.
 
 ## Project Structure
 ```
