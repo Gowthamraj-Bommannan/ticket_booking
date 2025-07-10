@@ -58,10 +58,10 @@ class BookingViewSet(viewsets.ModelViewSet):
                     passenger.seat_number = f"{booking.class_type}-{i+1:03d}"
                     passenger.booking_status = 'RAC'
                 else:
+                    passenger.seat_number = None
                     passenger.booking_status = 'WL'
                 passenger.save()
             booking.booking_status = 'RAC' if available_seats > 0 else 'WL'
-        
         booking.save()
 
     def _get_available_seats_for_booking(self, booking):
@@ -88,7 +88,7 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
-        """Cancel a booking with refund calculation"""
+        """Cancel a booking and update seat availability"""
         booking = self.get_object()
         
         if booking.booking_status == 'CANCELLED':
@@ -97,21 +97,58 @@ class BookingViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Calculate refund based on cancellation time
-        refund_amount = self._calculate_refund(booking)
-        
         # Update booking status
         booking.booking_status = 'CANCELLED'
         booking.save()
+        
+        # Update all passengers' status to CANCELLED and clear seat_number
+        for passenger in booking.passengers.all():
+            passenger.booking_status = 'CANCELLED'
+            passenger.seat_number = None
+            passenger.save()
         
         # Release seats and auto-promote RAC/WL
         release_seats_and_promote(booking)
         
         return Response({
-            'detail': 'Booking cancelled successfully.',
-            'refund_amount': refund_amount,
-            'pnr_number': booking.pnr_number
-        })
+            'detail': 'Cancelled successfully, refund will be transferred to you within 4-5 working days.'
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='transfer-passengers')
+    def transfer_passengers(self, request, pk=None):
+        """
+        Transfer one or more passengers in a booking to new people (update name, age, gender only).
+        Only the booking owner can do this. Berth, seat, and status remain unchanged.
+        Passengers are identified by their current name.
+        """
+        booking = self.get_object()
+        transfers = request.data.get('transfers', [])
+        updated_names = []
+        for transfer in transfers:
+            current_name = transfer.get('current_name')
+            new_name = transfer.get('new_name')
+            new_age = transfer.get('new_age')
+            new_gender = transfer.get('new_gender')
+            try:
+                passenger = booking.passengers.filter(name=current_name).first()
+            except Passenger.DoesNotExist:
+                continue  # Skip if not found
+            if not passenger:
+                continue  # Skip if not found
+            if new_name:
+                passenger.name = new_name
+            if new_age:
+                passenger.age = new_age
+            if new_gender:
+                passenger.gender = new_gender
+            passenger.save()
+            updated_names.append(current_name)
+        # Serialize updated booking
+        serializer = BookingSerializer(booking)
+        return Response({
+            'detail': 'Ticket transferred successfully. Please provide your identity proof during travel.',
+            'booking': serializer.data
+        }, status=status.HTTP_200_OK)
 
     def _calculate_refund(self, booking):
         """Calculate refund amount based on cancellation time"""
@@ -162,7 +199,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             source_station=source_station,
             destination_station=destination_station,
             total_fare=total_fare,
-            booking_status='INITIATED',
+            booking_status='PENDING',
             travel_date=validated_data['travel_date'],
             class_type=validated_data['class_type'],
             quota=validated_data['quota']
@@ -184,7 +221,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         # Get distance between stations
         source_stop = TrainRouteStop.objects.filter(train=train, station=source_station).order_by('sequence').first()
         dest_stop = TrainRouteStop.objects.filter(train=train, station=destination_station).order_by('sequence').first()
-        distance = dest_stop.distance_from_source - source_stop.distance_from_source if source_stop and dest_stop else 0
+        distance = Decimal(str(dest_stop.distance_from_source - source_stop.distance_from_source)) if source_stop and dest_stop else Decimal('0')
         
         # Base fare rates per km (simplified)
         fare_rates = {
@@ -205,7 +242,8 @@ class BookingViewSet(viewsets.ModelViewSet):
         }
         quota_multiplier = quota_multipliers.get(quota, Decimal('1.00'))
         
-        total_fare = base_fare * quota_multiplier * passenger_count
+        # Ensure all operands are Decimal
+        total_fare = base_fare * quota_multiplier * Decimal(passenger_count)
         return total_fare
 
 class TrainSearchViewSet(viewsets.ViewSet):

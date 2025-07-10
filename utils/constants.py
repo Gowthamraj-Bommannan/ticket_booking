@@ -145,6 +145,19 @@ class RouteMessage:
     ROUTE_STOP_ALL_FIELDS_REQUIRED = 'All fields (train, station, arrival_time, departure_time, insert_after_station_code) are required.'
     ROUTE_STOP_INVALID_INPUT = 'Invalid input for route stop.'
 
+# ----------- PAYMENT CONSTANTS -------------
+class PaymentMessage:
+    PAYMENT_FAILED = "Payment failed. Please try again."
+    PAYMENT_ALREADY_SUCCESS = "Payment already completed for this booking."
+    PAYMENT_NOT_FOUND = "Payment transaction not found."
+    INVALID_PAYMENT_METHOD = "Invalid payment method."
+    PAYMENT_AMOUNT_MISMATCH = "Payment amount does not match booking total."
+    PAYMENT_GATEWAY_ERROR = "Payment gateway error. Please try again later."
+    PAYMENT_PENDING = "Payment is still pending."
+    PAYMENT_REFUND_INITIATED = "Refund has been initiated for this payment."
+    PAYMENT_UNAUTHORIZED = "You are not authorized to perform this payment."
+    PAYMENT_SESSION_EXPIRED = "Payment session has expired. Please start again."
+
 
 
  

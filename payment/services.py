@@ -1,9 +1,6 @@
-from decimal import Decimal
 import random, string
 from bookingsystem.models import Booking, Passenger
 from trains.models import TrainClass
-from routes.models import TrainRouteStop
-from django.db.models import Q
 
 def get_booked_seats(train_id, class_type, travel_date, segment):
     """

@@ -28,8 +28,8 @@ class RouteTemplateStopAdmin(admin.ModelAdmin):
 
 @admin.register(TrainRouteStop)
 class TrainRouteStopAdmin(admin.ModelAdmin):
-    list_display = ('train', 'station', 'sequence', 'arrival_time', 'departure_time', 'halt_minutes', 'day_count')
+    list_display = ('train', 'station', 'sequence', 'scheduled_arrival_time', 'scheduled_departure_time', 'halt_minutes', 'day_count')
     list_filter = ('train', 'station', 'day_count')
-    search_fields = ('train__name', 'train__train_number', 'station__name', 'station__code')
-    ordering = ['train', 'sequence']
+    search_fields = ('train__train_number', 'train__name', 'station__name', 'station__code')
+    ordering = ('train', 'sequence')
     readonly_fields = ('created_at', 'updated_at')

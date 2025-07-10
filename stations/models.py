@@ -34,21 +34,19 @@ class Station(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     # Managers
-    objects = ActiveManager()  # Returns only active records
-    all_objects = models.Manager()  # Returns all records including inactive
+    objects = ActiveManager()
+    all_objects = models.Manager()
 
     def clean(self):
         """
         Validates station code, uniqueness, and station master assignment.
         """
-        # Code must be uppercase, unique (case-insensitive), and 2-5 chars
         if not (2 <= len(self.code) <= 5):
             raise ValidationError({'code': 'Code must be 2-5 characters.'})
         if self.code != self.code.upper():
             raise ValidationError({'code': 'Code must be uppercase.'})
         if Station.all_objects.exclude(pk=self.pk).filter(code__iexact=self.code).exists():
             raise ValidationError({'code': 'Station code must be unique (case-insensitive).'})
-        # Station master validation - check is_active first, then role and is_staff
         if self.station_master:
             if not self.station_master.is_active:
                 raise ValidationError({'station_master': 'User must be active (is_active=True).'})

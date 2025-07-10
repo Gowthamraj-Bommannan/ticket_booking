@@ -2,7 +2,11 @@ from rest_framework.exceptions import APIException
 from rest_framework import status
 from rest_framework.views import exception_handler
 from rest_framework.response import Response
-from utils.constants import AlreadyExistsMessage, UserMessage, GeneralMessage, TrainMessage, StationMessage, RouteMessage
+from utils.constants import (AlreadyExistsMessage, UserMessage, GeneralMessage,
+                             TrainMessage, StationMessage, RouteMessage, 
+                             PaymentMessage)
+import logging
+logger = logging.getLogger("payment")
 
 
 def custom_exception_handler(exc, context):
@@ -258,4 +262,54 @@ class RouteStopInvalidInputException(APIException):
     status_code = status.HTTP_400_BAD_REQUEST
     default_detail = RouteMessage.ROUTE_STOP_INVALID_INPUT
     default_code = 'route_stop_invalid_input'
+ 
+class PaymentFailedException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = PaymentMessage.PAYMENT_FAILED
+    default_code = 'payment_failed'
+
+class PaymentAlreadySuccessException(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = PaymentMessage.PAYMENT_ALREADY_SUCCESS
+    default_code = 'payment_already_success'
+
+class PaymentNotFoundException(APIException):
+    status_code = status.HTTP_404_NOT_FOUND
+    default_detail = PaymentMessage.PAYMENT_NOT_FOUND
+    default_code = 'payment_not_found'
+
+class InvalidPaymentMethodException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = PaymentMessage.INVALID_PAYMENT_METHOD
+    default_code = 'invalid_payment_method'
+
+class PaymentAmountMismatchException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = PaymentMessage.PAYMENT_AMOUNT_MISMATCH
+    default_code = 'payment_amount_mismatch'
+
+class PaymentGatewayErrorException(APIException):
+    status_code = status.HTTP_502_BAD_GATEWAY
+    default_detail = PaymentMessage.PAYMENT_GATEWAY_ERROR
+    default_code = 'payment_gateway_error'
+
+class PaymentPendingException(APIException):
+    status_code = status.HTTP_202_ACCEPTED
+    default_detail = PaymentMessage.PAYMENT_PENDING
+    default_code = 'payment_pending'
+
+class PaymentRefundInitiatedException(APIException):
+    status_code = status.HTTP_200_OK
+    default_detail = PaymentMessage.PAYMENT_REFUND_INITIATED
+    default_code = 'payment_refund_initiated'
+
+class PaymentUnauthorizedException(APIException):
+    status_code = status.HTTP_403_FORBIDDEN
+    default_detail = PaymentMessage.PAYMENT_UNAUTHORIZED
+    default_code = 'payment_unauthorized'
+
+class PaymentSessionExpiredException(APIException):
+    status_code = status.HTTP_408_REQUEST_TIMEOUT
+    default_detail = PaymentMessage.PAYMENT_SESSION_EXPIRED
+    default_code = 'payment_session_expired'
  

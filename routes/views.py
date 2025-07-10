@@ -4,13 +4,15 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from django.db import transaction
+from rest_framework import serializers
 from datetime import datetime, timedelta
 from .models import TrainRouteStop, RouteTemplate, RouteTemplateStop
 from .serializers import (
     TrainRouteStopSerializer, TrainRouteStopCreateSerializer, 
     TrainRouteStopUpdateSerializer, TrainRouteSerializer,
     RouteTemplateSerializer, RouteTemplateStopSerializer,
-    CreateTrainFromTemplateSerializer
+    CreateTrainFromTemplateSerializer,
+    TrainRouteStopArrivalUpdateSerializer
 )
 from trains.models import Train
 from stations.models import Station
@@ -125,7 +127,7 @@ class TrainRouteViewSet(viewsets.ModelViewSet):
         if request.user.role == 'station_master':
             if not hasattr(request.user, 'station') or request.user.station != station:
                 raise RouteStopInvalidInputException()
-            allowed_fields = ['arrival_time', 'departure_time']
+            allowed_fields = ['scheduled_arrival_time', 'scheduled_departure_time']
             data = {k: v for k, v in request.data.items() if k in allowed_fields}
         else:
             data = request.data
@@ -180,6 +182,200 @@ class TrainRouteViewSet(viewsets.ModelViewSet):
         serializer = TrainRouteSerializer(train)
         logger.info(f"Route retrieved successfully for train {train_number} by user {request.user.id if request.user else 'Anonymous'}")
         return Response(serializer.data)
+
+    @action(detail=False, methods=['patch'], url_path='train/(?P<train_number>[^/.]+)/stations/(?P<station_code>[^/.]+)/update-arrival')
+    def update_actual_arrival(self, request, train_number=None, station_code=None):
+        """
+        Allows station master to update actual arrival time and auto-update actual departure time. Propagates delay to subsequent stops.
+        """
+        logger.info(f"Updating actual arrival for train {train_number} at station {station_code} by user {request.user.username}")
+        
+        try:
+            # Validate and get required objects
+            train, station, route_stop = self._validate_arrival_update_request(train_number, station_code)
+            
+            # Check permissions
+            self._check_station_master_permission(request.user, station, station_code)
+            
+            # Update arrival time
+            serializer = self._update_arrival_time(route_stop, request.data)
+            
+            # Propagate delay if needed
+            self._propagate_delay_if_needed(train, route_stop, serializer)
+            
+            logger.info(f"Arrival update complete for train {train_number} at station {station_code}")
+            return Response(serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Error updating arrival for train {train_number} at station {station_code}: {str(e)}", exc_info=True)
+            raise RouteStopInvalidInputException(f"Failed to update arrival time: {str(e)}")
+
+    def _validate_arrival_update_request(self, train_number, station_code):
+        """
+        Validates the request and returns train, station, and route_stop objects.
+        """
+        train = Train.objects.filter(train_number=train_number).first()
+        if not train or not train.is_active:
+            logger.warning(f"Train not found or inactive: {train_number}")
+            raise RouteStopTrainInactiveException()
+            
+        station = Station.objects.filter(code=station_code).first()
+        if not station or not station.is_active:
+            logger.warning(f"Station not found or inactive: {station_code}")
+            raise RouteStopStationInactiveException()
+            
+        route_stop = TrainRouteStop.objects.filter(train=train, station=station).first()
+        if not route_stop:
+            logger.warning(f"Route stop not found for train {train_number} at station {station_code}")
+            raise RouteStopNotFoundException()
+            
+        return train, station, route_stop
+
+    def _check_station_master_permission(self, user, station, station_code):
+        """
+        Checks if user has station master permission for the given station.
+        """
+        if user.role != 'station_master' or not hasattr(user, 'station') or user.station != station:
+            logger.warning(f"Unauthorized access: user {user.username} is not station master for station {station_code}")
+            from exceptions.handlers import UnauthorizedAccessException
+            raise UnauthorizedAccessException()
+
+    def _update_arrival_time(self, route_stop, data):
+        """
+        Updates the actual arrival time and calculates departure time.
+        """
+        serializer = TrainRouteStopArrivalUpdateSerializer(
+            route_stop, 
+            data=data, 
+            context={'request': None}, 
+            partial=True
+        )
+        
+        try:
+            serializer.is_valid(raise_exception=True)
+        except serializers.ValidationError as e:
+            logger.error(f"Serializer validation failed: {e.detail}")
+            raise RouteStopInvalidInputException(f"Validation error: {e.detail}")
+        except Exception as e:
+            logger.error(f"Unexpected error during serializer validation: {str(e)}", exc_info=True)
+            raise RouteStopInvalidInputException(f"Serializer error: {str(e)}")
+        
+        with transaction.atomic():
+            instance = serializer.save()
+            logger.info(f"Updated arrival time: {instance.actual_arrival_time}, departure time: {instance.actual_departure_time}")
+            return serializer
+
+    def _propagate_delay_if_needed(self, train, route_stop, serializer):
+        """
+        Propagates delay to subsequent stops if there's a delay.
+        """
+        from datetime import datetime, timedelta
+        
+        scheduled = route_stop.scheduled_departure_time
+        actual = serializer.instance.actual_departure_time
+        
+        if scheduled and actual and actual > scheduled:
+            delay = (datetime.combine(datetime.today(), actual) - 
+                    datetime.combine(datetime.today(), scheduled)).total_seconds() / 60
+            logger.info(f"Delay detected: {delay} minutes, propagating to subsequent stops")
+            
+            if delay > 0:
+                self._update_subsequent_stops(train, route_stop, delay)
+        else:
+            logger.info("No delay detected")
+
+    def _update_subsequent_stops(self, train, route_stop, delay):
+        """
+        Updates all subsequent stops with the calculated delay.
+        """
+        from datetime import datetime, timedelta
+        
+        subsequent_stops = TrainRouteStop.objects.filter(
+            train=train, 
+            sequence__gt=route_stop.sequence
+        ).order_by('sequence')
+        
+        logger.info(f"Updating {subsequent_stops.count()} subsequent stops")
+        
+        for stop in subsequent_stops:
+            self._update_single_stop(stop, delay, train)
+
+    def _update_single_stop(self, stop, delay, train):
+        """
+        Updates a single stop with the delay and calculates actual times if needed.
+        """
+        from datetime import datetime, timedelta
+        
+        # Store old values for logging
+        old_sched_arr = stop.scheduled_arrival_time
+        old_sched_dep = stop.scheduled_departure_time
+        
+        # Update scheduled times
+        if stop.scheduled_arrival_time:
+            arr_dt = datetime.combine(datetime.today(), stop.scheduled_arrival_time) + timedelta(minutes=delay)
+            stop.scheduled_arrival_time = arr_dt.time()
+        
+        if stop.scheduled_departure_time:
+            dep_dt = datetime.combine(datetime.today(), stop.scheduled_departure_time) + timedelta(minutes=delay)
+            stop.scheduled_departure_time = dep_dt.time()
+        
+        # Update actual times if they exist
+        self._update_actual_times_if_exist(stop, delay)
+        
+        # Calculate actual times if train has departed from previous station
+        self._calculate_actual_times_if_needed(stop, train)
+        
+        stop.save()
+        logger.info(f"Updated {stop.station.code}: sched_arr={old_sched_arr}->{stop.scheduled_arrival_time}, "
+                  f"sched_dep={old_sched_dep}->{stop.scheduled_departure_time}")
+
+    def _update_actual_times_if_exist(self, stop, delay):
+        """
+        Updates actual times if they already exist.
+        """
+        from datetime import datetime, timedelta
+        
+        if stop.actual_arrival_time:
+            arr_dt = datetime.combine(datetime.today(), stop.actual_arrival_time) + timedelta(minutes=delay)
+            stop.actual_arrival_time = arr_dt.time()
+        
+        if stop.actual_departure_time:
+            dep_dt = datetime.combine(datetime.today(), stop.actual_departure_time) + timedelta(minutes=delay)
+            stop.actual_departure_time = dep_dt.time()
+
+    def _calculate_actual_times_if_needed(self, stop, train):
+        """
+        Calculates actual times if they don't exist but train has departed from previous station.
+        """
+        from datetime import datetime, timedelta
+        
+        if not stop.actual_arrival_time and not stop.actual_departure_time:
+            prev_stop = TrainRouteStop.objects.filter(
+                train=train, 
+                sequence=stop.sequence - 1
+            ).first()
+            
+            if prev_stop and prev_stop.actual_departure_time:
+                self._set_actual_times_from_previous_stop(stop, prev_stop)
+
+    def _set_actual_times_from_previous_stop(self, stop, prev_stop):
+        """
+        Sets actual times based on previous stop's actual departure time.
+        """
+        from datetime import datetime, timedelta
+        
+        if prev_stop.scheduled_departure_time and stop.scheduled_arrival_time:
+            travel_time = (datetime.combine(datetime.today(), stop.scheduled_arrival_time) - 
+                         datetime.combine(datetime.today(), prev_stop.scheduled_departure_time)).total_seconds() / 60
+            
+            # Set actual arrival time
+            actual_arr_dt = datetime.combine(datetime.today(), prev_stop.actual_departure_time) + timedelta(minutes=travel_time)
+            stop.actual_arrival_time = actual_arr_dt.time()
+            
+            # Set actual departure time
+            if stop.halt_minutes:
+                actual_dep_dt = actual_arr_dt + timedelta(minutes=stop.halt_minutes)
+                stop.actual_departure_time = actual_dep_dt.time()
 
 class RouteTemplateViewSet(viewsets.ModelViewSet):
     """
@@ -264,8 +460,10 @@ class RouteTemplateViewSet(viewsets.ModelViewSet):
             train=train,
             station=route_template.source_station,
             sequence=1,
-            arrival_time=None,
-            departure_time=start_time,
+            scheduled_arrival_time=None,
+            scheduled_departure_time=start_time,
+            actual_arrival_time=None,
+            actual_departure_time=None,
             halt_minutes=0,
             distance_from_source=0.0,
             day_count=1
@@ -310,18 +508,18 @@ class RouteTemplateViewSet(viewsets.ModelViewSet):
         
         arrival_time = arrival_dt.time()
         
-        # Calculate departure time
         halt_minutes = max(1, template_stop.estimated_halt_minutes)
         departure_dt = arrival_dt + timedelta(minutes=halt_minutes)
         departure_time = departure_dt.time()
         
-        # Create train route stop
         route_stop = TrainRouteStop(
             train=train,
             station=template_stop.station,
             sequence=template_stop.sequence + 1,
-            arrival_time=arrival_time,
-            departure_time=departure_time,
+            scheduled_arrival_time=arrival_time,
+            scheduled_departure_time=departure_time,
+            actual_arrival_time=None,
+            actual_departure_time=None,
             halt_minutes=halt_minutes,
             distance_from_source=template_stop.distance_from_source,
             day_count=current_day
@@ -355,8 +553,10 @@ class RouteTemplateViewSet(viewsets.ModelViewSet):
             train=train,
             station=route_template.destination_station,
             sequence=last_template_stop.sequence + 2,
-            arrival_time=arrival_time,
-            departure_time=None,
+            scheduled_arrival_time=arrival_time,
+            scheduled_departure_time=None,
+            actual_arrival_time=None,
+            actual_departure_time=None,
             halt_minutes=0,
             distance_from_source=route_template.total_distance,
             day_count=current_day
@@ -383,5 +583,4 @@ class RouteTemplateStopViewSet(viewsets.ModelViewSet):
             permission_classes = [IsAdminUser]
         return [permission() for permission in permission_classes]
 
-# Expose ViewSets for router registration
 __all__ = ['TrainRouteViewSet', 'RouteTemplateViewSet', 'RouteTemplateStopViewSet', 'IsAdminUser', 'IsStationMaster']

@@ -88,13 +88,26 @@ class TrainRouteStopSerializer(serializers.ModelSerializer):
     train_name = serializers.CharField(source='train.name', read_only=True)
     station_code = serializers.CharField(source='station.code', read_only=True)
     station_name = serializers.CharField(source='station.name', read_only=True)
-    
+    arrival_delay_minutes = serializers.SerializerMethodField()
+
     class Meta:
         model = TrainRouteStop
-        fields = ['id', 'train', 'train_number', 'train_name', 'station', 'station_code', 
-                 'station_name', 'sequence', 'arrival_time', 'departure_time', 'halt_minutes', 
-                 'distance_from_source', 'day_count', 'created_at', 'updated_at']
+        fields = [
+            'id', 'train', 'train_number', 'train_name', 'station', 'station_code', 'station_name', 'sequence',
+            'scheduled_arrival_time', 'scheduled_departure_time', 'actual_arrival_time', 'actual_departure_time',
+            'halt_minutes', 'distance_from_source', 'day_count',
+            'arrival_delay_minutes'
+        ]
         read_only_fields = ['created_at', 'updated_at', 'halt_minutes']
+
+    def get_arrival_delay_minutes(self, obj):
+        from datetime import datetime, timedelta
+        if obj.scheduled_arrival_time and obj.actual_arrival_time:
+            sched = datetime.combine(datetime.today(), obj.scheduled_arrival_time)
+            actual = datetime.combine(datetime.today(), obj.actual_arrival_time)
+            delay = (actual - sched).total_seconds() / 60
+            return max(0, int(delay))
+        return 0
 
     def to_representation(self, instance):
         logger.debug(f"Serializing train route stop: {instance.id}")
@@ -108,7 +121,7 @@ class TrainRouteStopCreateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = TrainRouteStop
-        fields = ['station_code', 'sequence', 'arrival_time', 'departure_time', 
+        fields = ['station_code', 'sequence', 'scheduled_arrival_time', 'scheduled_departure_time', 
                  'halt_minutes', 'distance_from_source', 'day_count']
 
     def validate_station_code(self, value):
@@ -161,8 +174,8 @@ class TrainRouteStopCreateSerializer(serializers.ModelSerializer):
                 raise RouteStopInvalidSequenceException()
         
         # Validate arrival/departure times
-        arrival_time = data.get('arrival_time')
-        departure_time = data.get('departure_time')
+        arrival_time = data.get('scheduled_arrival_time')
+        departure_time = data.get('scheduled_departure_time')
         
         if arrival_time and departure_time:
             if arrival_time >= departure_time:
@@ -182,9 +195,9 @@ class TrainRouteStopCreateSerializer(serializers.ModelSerializer):
                 train=train, 
                 sequence=data['sequence'] - 1
             ).first()
-            if prev_stop and prev_stop.departure_time and arrival_time:
+            if prev_stop and prev_stop.scheduled_departure_time and arrival_time:
                 # Check if arrival is after previous departure
-                prev_departure = datetime.combine(datetime.today(), prev_stop.departure_time)
+                prev_departure = datetime.combine(datetime.today(), prev_stop.scheduled_departure_time)
                 current_arrival = datetime.combine(datetime.today(), arrival_time)
                 
                 # Handle day change
@@ -202,8 +215,8 @@ class TrainRouteStopCreateSerializer(serializers.ModelSerializer):
                 train=train, 
                 sequence=data['sequence'] - 1
             ).first()
-            if prev_stop and prev_stop.departure_time and arrival_time:
-                prev_departure = datetime.combine(datetime.today(), prev_stop.departure_time)
+            if prev_stop and prev_stop.scheduled_departure_time and arrival_time:
+                prev_departure = datetime.combine(datetime.today(), prev_stop.scheduled_departure_time)
                 current_arrival = datetime.combine(datetime.today(), arrival_time)
                 
                 if current_arrival < prev_departure:
@@ -222,7 +235,7 @@ class TrainRouteStopUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TrainRouteStop
-        fields = ['sequence', 'arrival_time', 'departure_time', 'halt_minutes', 
+        fields = ['sequence', 'scheduled_arrival_time', 'scheduled_departure_time', 'halt_minutes', 
                  'distance_from_source', 'day_count']
 
     def validate_sequence(self, value):
@@ -262,8 +275,8 @@ class TrainRouteStopUpdateSerializer(serializers.ModelSerializer):
                 raise RouteStopInvalidSequenceException()
         
         # Validate arrival/departure times
-        arrival_time = data.get('arrival_time', instance.arrival_time)
-        departure_time = data.get('departure_time', instance.departure_time)
+        arrival_time = data.get('scheduled_arrival_time', instance.scheduled_arrival_time)
+        departure_time = data.get('scheduled_departure_time', instance.scheduled_departure_time)
         
         if arrival_time and departure_time:
             if arrival_time >= departure_time:
@@ -283,9 +296,9 @@ class TrainRouteStopUpdateSerializer(serializers.ModelSerializer):
                 train=instance.train, 
                 sequence=sequence - 1
             ).exclude(pk=instance.pk).first()
-            if prev_stop and prev_stop.departure_time and arrival_time:
+            if prev_stop and prev_stop.scheduled_departure_time and arrival_time:
                 # Check if arrival is after previous departure
-                prev_departure = datetime.combine(datetime.today(), prev_stop.departure_time)
+                prev_departure = datetime.combine(datetime.today(), prev_stop.scheduled_departure_time)
                 current_arrival = datetime.combine(datetime.today(), arrival_time)
                 
                 # Handle day change
@@ -297,7 +310,128 @@ class TrainRouteStopUpdateSerializer(serializers.ModelSerializer):
                     logger.error(f"Current arrival {current_arrival} is not after previous departure {prev_departure} for train {instance.train.train_number}, sequence {sequence}")
                     raise RouteStopInvalidSequenceException()
         
+        # Validate timing with next stop
+        next_stop = TrainRouteStop.objects.filter(
+            train=instance.train, 
+            sequence=sequence + 1
+        ).exclude(pk=instance.pk).first()
+        if next_stop and next_stop.scheduled_arrival_time and departure_time:
+            # Check if departure is before next arrival
+            next_arrival = datetime.combine(datetime.today(), next_stop.scheduled_arrival_time)
+            current_departure = datetime.combine(datetime.today(), departure_time)
+            
+            # Handle day change
+            day_count = data.get('day_count', instance.day_count)
+            if day_count < next_stop.day_count:
+                current_departure += timedelta(days=next_stop.day_count - day_count)
+            
+            if current_departure >= next_arrival:
+                logger.error(f"Current departure {current_departure} is not before next arrival {next_arrival} for train {instance.train.train_number}, sequence {sequence}")
+                raise RouteStopInvalidSequenceException()
+        
         return super().validate(data)
+
+class TrainRouteStopArrivalUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for station master to update actual arrival time and auto-update actual departure time.
+    """
+    actual_arrival_time = serializers.TimeField(required=True)
+
+    class Meta:
+        model = TrainRouteStop
+        fields = ['actual_arrival_time']
+
+    def validate(self, data):
+        """
+        Additional validation for the entire serializer.
+        """
+        logger.info(f"Validating entire serializer data: {data}")
+        instance = self.instance
+        
+        if not instance:
+            logger.error("No instance provided for validation")
+            raise serializers.ValidationError("Invalid route stop instance.")
+        
+        # Check if this is a source station (no scheduled arrival time)
+        if instance.scheduled_arrival_time is None:
+            logger.warning(f"Cannot update arrival for source station {instance.station.code}")
+            raise serializers.ValidationError("Cannot update arrival time for the source station.")
+        
+        logger.info("Serializer validation passed")
+        return data
+
+    def validate_actual_arrival_time(self, value):
+        import pytz
+        from django.utils import timezone
+        instance = self.instance
+        logger.info(f"Validating actual_arrival_time: value={value}, instance_id={instance.id if instance else 'None'}")
+        
+        if not instance:
+            logger.error("No instance provided for validation")
+            raise serializers.ValidationError("Invalid route stop instance.")
+            
+        scheduled = instance.scheduled_arrival_time
+        logger.info(f"Scheduled arrival time: {scheduled}")
+        
+        if not scheduled:
+            logger.warning("No scheduled arrival time found for this stop")
+            raise serializers.ValidationError("Cannot update arrival time for stops without scheduled arrival time.")
+        
+        # Compare against scheduled time, not current time
+        # Allow actual arrival to be within reasonable bounds of scheduled time
+        scheduled_dt = datetime.combine(datetime.today(), scheduled)
+        actual_dt = datetime.combine(datetime.today(), value)
+        
+        # Allow actual arrival to be up to 2 hours earlier or 4 hours later than scheduled
+        time_diff_minutes = (actual_dt - scheduled_dt).total_seconds() / 60
+        
+        logger.info(f"Time comparison: scheduled={scheduled}, actual={value}, diff_minutes={time_diff_minutes}")
+        
+        if time_diff_minutes < -120:  # More than 2 hours early
+            logger.warning(f"Actual arrival time {value} is more than 2 hours earlier than scheduled {scheduled}")
+            raise serializers.ValidationError("Actual arrival time cannot be more than 2 hours earlier than scheduled.")
+        
+        if time_diff_minutes > 240:  # More than 4 hours late
+            logger.warning(f"Actual arrival time {value} is more than 4 hours later than scheduled {scheduled}")
+            raise serializers.ValidationError("Actual arrival time cannot be more than 4 hours later than scheduled.")
+        
+        logger.info(f"Validation passed for actual_arrival_time: {value}")
+        return value
+
+    def update(self, instance, validated_data):
+        logger.info(f"Starting update for instance {instance.id}")
+        user = self.context.get('request').user if self.context.get('request') else None
+        old_arrival = instance.actual_arrival_time
+        old_departure = instance.actual_departure_time
+        actual_arrival = validated_data['actual_arrival_time']
+        scheduled_arrival = instance.scheduled_arrival_time
+        halt = instance.halt_minutes or 2  # Ensure halt_minutes is not None
+        
+        logger.info(f"Update values: actual_arrival={actual_arrival}, scheduled_arrival={scheduled_arrival}, halt={halt}")
+        logger.info(f"Old values: old_arrival={old_arrival}, old_departure={old_departure}")
+        
+        # Calculate new actual_departure_time if delayed
+        if scheduled_arrival and actual_arrival > scheduled_arrival:
+            from datetime import datetime, timedelta
+            arr_dt = datetime.combine(datetime.today(), actual_arrival)
+            dep_dt = arr_dt + timedelta(minutes=halt)
+            instance.actual_departure_time = dep_dt.time()
+            logger.info(f"Train delayed. New departure time: {instance.actual_departure_time}")
+        else:
+            logger.info("Train not delayed. Departure time unchanged.")
+        
+        # If not delayed, leave actual_departure_time unchanged
+        instance.actual_arrival_time = actual_arrival
+        
+        try:
+            instance.save()
+            logger.info(f"Instance saved successfully. New values: actual_arrival={instance.actual_arrival_time}, actual_departure={instance.actual_departure_time}")
+        except Exception as e:
+            logger.error(f"Error saving instance: {str(e)}", exc_info=True)
+            raise serializers.ValidationError(f"Failed to save arrival update: {str(e)}")
+        
+        logger.info(f"Station master {user.username if user else 'unknown'} updated arrival for train {instance.train.train_number} at station {instance.station.code}: old_arrival={old_arrival}, new_arrival={actual_arrival}, old_departure={old_departure}, new_departure={instance.actual_departure_time}")
+        return instance
 
 class TrainRouteSerializer(serializers.ModelSerializer):
     """

@@ -24,8 +24,8 @@ urlpatterns = [
     # Admin Staff Approval Panel
     path('api/admin/staff-requests/', StaffRequestListView.as_view(), name='staff-requests-list'),
     path('api/admin/staff-requests/<int:pk>/', StaffRequestDetailView.as_view(), name='staff-request-detail'),
-    path('api/admin/approve/<int:pk>/', ApproveStaffRequestView.as_view(), name='approve-staff-request'),
-    path('api/admin/reject/<int:pk>/', RejectStaffRequestView.as_view(), name='reject-staff-request'),
-    path('api/admin/approve-all/', ApproveAllStaffRequestsView.as_view(), name='approve-all-staff-requests'),
-    path('api/admin/reject-all/', RejectAllStaffRequestsView.as_view(), name='reject-all-staff-requests'),
+    path('api/admin/staff-requests/approve/<int:pk>/', ApproveStaffRequestView.as_view(), name='approve-staff-request'),
+    path('api/admin/staff-requests/reject/<int:pk>/', RejectStaffRequestView.as_view(), name='reject-staff-request'),
+    path('api/admin/staff-requests/approve-all/', ApproveAllStaffRequestsView.as_view(), name='approve-all-staff-requests'),
+    path('api/admin/staff-requests/reject-all/', RejectAllStaffRequestsView.as_view(), name='reject-all-staff-requests'),
 ]
