@@ -1,5 +1,5 @@
 from django.db import models
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.utils import timezone
 
 class Role(models.Model):
@@ -22,6 +22,35 @@ class Role(models.Model):
             str: The name of the role
         """
         return self.name
+
+class CustomUserManager(BaseUserManager):
+    """
+    Custom user manager that handles user creation without setting is_staff/is_superuser.
+    """
+    def create_user(self, username, email=None, password=None, **extra_fields):
+        """
+        Create and save a user with the given username, email, and password.
+        """
+        if not username:
+            raise ValueError('The given username must be set')
+        email = self.normalize_email(email)
+        username = self.model.normalize_username(username)
+        user = self.model(username=username, email=email, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
+
+    def create_superuser(self, username, email=None, password=None, **extra_fields):
+        """
+        Create and save a superuser with the given username, email, and password.
+        """
+        extra_fields.setdefault('role', 'admin')
+        extra_fields.setdefault('is_active', True)
+        
+        if extra_fields.get('role') != 'admin':
+            raise ValueError('Superuser must have role=admin.')
+        
+        return self.create_user(username, email, password, **extra_fields)
 
 class User(AbstractUser):
     """
@@ -46,45 +75,33 @@ class User(AbstractUser):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='user')
     created_at = models.DateTimeField(default=timezone.now)
     last_login = models.DateTimeField(blank=True, null=True)
-    
-    # Override AbstractUser fields
-    is_staff = models.BooleanField(default=False)
-    is_superuser = models.BooleanField(default=False)
-    is_active = models.BooleanField(default=True)
 
     REQUIRED_FIELDS = ['email', 'mobile_number']
     USERNAME_FIELD = 'username'
+    
+    objects = CustomUserManager()
 
     def save(self, *args, **kwargs):
         """
-        Overrides the default save method to set role-based permissions.
-        
-        Automatically sets is_staff and is_superuser flags based on the user's role:
-        - Admin: Full staff and superuser privileges
-        - Station Master: Staff privileges only
-        - User: No special privileges
-        
-        Also ensures created_at timestamp is set for new users.
-        
-        Args:
-            *args: Additional positional arguments
-            **kwargs: Additional keyword arguments
+        Overrides the default save method to ensure created_at timestamp is set.
         """
         if not self.created_at:
             self.created_at = timezone.localtime(timezone.now())
-        
-        # Set is_staff and is_superuser based on role
-        if self.role == 'admin':
-            self.is_staff = True
-            self.is_superuser = True
-        elif self.role == 'station_master':
-            self.is_staff = True
-            self.is_superuser = False
-        else:  # user
-            self.is_staff = False
-            self.is_superuser = False
-            
         super().save(*args, **kwargs)
+
+    @property
+    def is_staff(self):
+        """
+        Returns True if user has staff privileges based on role.
+        """
+        return self.role in ['admin', 'station_master']
+
+    @property
+    def is_superuser(self):
+        """
+        Returns True if user has superuser privileges based on role.
+        """
+        return self.role == 'admin'
 
     def __str__(self):
         """

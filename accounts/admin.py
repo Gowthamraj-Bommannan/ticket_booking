@@ -17,15 +17,15 @@ class CustomUserAdmin(UserAdmin):
     Extends Django's UserAdmin to provide enhanced user management
     specific to the custom User model with role-based access control.
     """
-    list_display = ('username', 'email', 'mobile_number', 'role', 'is_active', 'is_staff', 'created_at')
-    list_filter = ('role', 'is_active', 'is_staff', 'is_superuser', 'created_at')
+    list_display = ('username', 'email', 'mobile_number', 'role', 'is_active', 'get_is_staff', 'get_is_superuser', 'created_at')
+    list_filter = ('role', 'is_active', 'created_at')
     search_fields = ('username', 'email', 'mobile_number', 'first_name', 'last_name')
     ordering = ('-created_at',)
     
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
         ('Personal info', {'fields': ('first_name', 'last_name', 'email', 'mobile_number')}),
-        ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'role', 'groups', 'user_permissions')}),
+        ('Permissions', {'fields': ('is_active', 'role', 'groups', 'user_permissions')}),
         ('Important dates', {'fields': ('last_login', 'date_joined', 'created_at')}),
     )
     
@@ -35,6 +35,18 @@ class CustomUserAdmin(UserAdmin):
             'fields': ('username', 'email', 'mobile_number', 'password1', 'password2', 'role'),
         }),
     )
+
+    def get_is_staff(self, obj):
+        """Display is_staff status based on role"""
+        return obj.is_staff
+    get_is_staff.boolean = True
+    get_is_staff.short_description = 'Staff'
+
+    def get_is_superuser(self, obj):
+        """Display is_superuser status based on role"""
+        return obj.is_superuser
+    get_is_superuser.boolean = True
+    get_is_superuser.short_description = 'Superuser'
 
 @admin.register(Role)
 class RoleAdmin(admin.ModelAdmin):

@@ -26,9 +26,9 @@ class Station(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        limit_choices_to={'role': 'station_master', 'is_staff': True, 'is_active': True},
+        limit_choices_to={'role': 'station_master', 'is_active': True},
         related_name='station',
-        help_text='Assign a user with role=station_master, is_staff=True, and is_active=True.'
+        help_text='Assign a user with role=station_master and is_active=True.'
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -50,8 +50,8 @@ class Station(models.Model):
         if self.station_master:
             if not self.station_master.is_active:
                 raise ValidationError({'station_master': 'User must be active (is_active=True).'})
-            if self.station_master.role != 'station_master' or not self.station_master.is_staff:
-                raise ValidationError({'station_master': 'User must have role=station_master and is_staff=True.'})
+            if self.station_master.role != 'station_master':
+                raise ValidationError({'station_master': 'User must have role=station_master.'})
             if Station.all_objects.exclude(pk=self.pk).filter(station_master=self.station_master).exists():
                 raise ValidationError({'station_master': 'This user is already assigned as a station master to another station.'})
 

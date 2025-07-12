@@ -1,5 +1,4 @@
 import logging
-logger = logging.getLogger("trains")
 from django.shortcuts import render
 from rest_framework import viewsets, status
 from rest_framework.response import Response
@@ -14,17 +13,18 @@ from exceptions.handlers import (
     TrainAlreadyActiveException, TrainInactiveException
 )
 
+logger = logging.getLogger("trains")
+
 class IsAdminSuperUser(BasePermission):
     """
-    Allows access only to admin users with is_superuser=True.
+    Allows access only to admin users.
     """
     def has_permission(self, request, view):
         logger.info(f"Checking IsAdminSuperUser permission for user: {request.user.username}")
         permission_granted = bool(
             request.user and 
             request.user.is_authenticated and
-            request.user.role == 'admin' and 
-            request.user.is_superuser
+            request.user.role == 'admin'
         )
         logger.info(f"IsAdminSuperUser permission granted: {permission_granted}")
         return permission_granted

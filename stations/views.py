@@ -13,6 +13,7 @@ from exceptions.handlers import (
     StationAlreadyActiveException, StationInactiveException
 )
 import logging
+
 logger = logging.getLogger("stations")
 
 # Expose StationViewSet for router registration
@@ -20,11 +21,11 @@ __all__ = ['StationViewSet', 'IsAdminUser', 'IsAdminOrStationMaster']
 
 class IsAdminUser(BasePermission):
     """
-    Allows access only to admin users or superusers.
+    Allows access only to admin users.
     """
     def has_permission(self, request, view):
         logger.info(f"Checking IsAdminUser permission for user: {request.user.id}")
-        is_allowed = bool(request.user and (request.user.is_superuser or getattr(request.user, 'role', None) == 'admin'))
+        is_allowed = bool(request.user and request.user.is_authenticated and request.user.role == 'admin')
         logger.info(f"IsAdminUser permission check result: {is_allowed}")
         return is_allowed
 
@@ -118,9 +119,9 @@ class StationViewSet(viewsets.ModelViewSet):
         if not user.is_active:
             logger.warning(f"User {user.username} (ID: {user.id}) is not active. Cannot assign as station master.")
             return Response({'detail': 'User must be active (is_active=True).'}, status=400)
-        if user.role != 'station_master' or not user.is_staff:
-            logger.warning(f"User {user.username} (ID: {user.id}) does not have role=station_master or is_staff=True. Cannot assign as station master.")
-            return Response({'detail': 'User must have role=station_master and is_staff=True.'}, status=400)
+        if user.role != 'station_master':
+            logger.warning(f"User {user.username} (ID: {user.id}) does not have role=station_master. Cannot assign as station master.")
+            return Response({'detail': 'User must have role=station_master.'}, status=400)
         if hasattr(user, 'station') and user.station is not None and user.station != station:
             logger.warning(f"User {user.username} (ID: {user.id}) is already assigned as station master to station {user.station.name} ({user.station.code}). Cannot re-assign.")
             return Response({'detail': 'User is already assigned as station master to another station.'}, status=400)

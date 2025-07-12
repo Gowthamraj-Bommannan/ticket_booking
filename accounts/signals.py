@@ -26,7 +26,7 @@ def create_roles_and_superuser(sender, **kwargs):
             )
         
         # Create superuser if it doesn't exist
-        if not User.objects.filter(is_superuser=True).exists():
+        if not User.objects.filter(role='admin').exists():
             User.objects.create_superuser(
                 username='admin',
                 email='admin@booking.com',

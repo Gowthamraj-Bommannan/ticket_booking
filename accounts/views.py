@@ -112,7 +112,6 @@ class RegisterView(APIView):
         """Complete the registration process"""
         # Create user with business logic moved from serializer
         validated_data = serializer.validated_data
-        validated_data['role'] = 'user'  # Always set role to user for regular registration
         user = User.objects.create_user(
             username=validated_data['username'],
             email=validated_data['email'],
@@ -120,6 +119,7 @@ class RegisterView(APIView):
             password=validated_data['password'],
             first_name=validated_data.get('first_name', ''),
             last_name=validated_data.get('last_name', ''),
+            role='user',  # Always set role to user for regular registration
         )
         logger.info(f"User created successfully - Username: {user.username}, Email: {user.email}")
         
@@ -206,8 +206,6 @@ class StaffRegisterView(APIView):
         """Complete the staff registration process"""
         # Create staff user with business logic moved from serializer
         validated_data = serializer.validated_data
-        validated_data['role'] = 'station_master'  # Set role to station_master
-        validated_data['is_active'] = False  # Initially inactive until approved
         user = User.objects.create_user(
             username=validated_data['username'],
             email=validated_data['email'],
@@ -215,6 +213,8 @@ class StaffRegisterView(APIView):
             password=validated_data['password'],
             first_name=validated_data.get('first_name', ''),
             last_name=validated_data.get('last_name', ''),
+            role='station_master',  # Set role to station_master
+            is_active=False,  # Initially inactive until approved
         )
         logger.info(f"Staff user created successfully - Username: {user.username}, Email: {user.email}")
         StaffRequest.objects.get_or_create(user=user)
@@ -539,7 +539,7 @@ class ApproveStaffRequestView(APIView):
         Returns:
             Response: Success confirmation message
         """
-        if not request.user.role or request.user.role.name != Role.ADMIN:
+        if not request.user.role or request.user.role != 'admin':
             logger.warning(f"Unauthorized access attempt to approve staff request by user {request.user.username} (ID: {request.user.id})")
             raise UnauthorizedAccessException('Admin access required.')
         try:
@@ -554,7 +554,7 @@ class ApproveStaffRequestView(APIView):
         staff_request.save()
         user = staff_request.user
         user.is_active = True
-        user.is_staff = True
+        user.role = 'station_master'  # Set role to station_master to make is_staff=True
         user.save()
         logger.info(f"Admin {request.user.username} (ID: {request.user.id}) approved staff request for user {user.username} (ID: {user.id})")
         return Response({'message': f'Staff request for {user.username} approved.'})
@@ -647,8 +647,7 @@ class ApproveAllStaffRequestsView(APIView):
         
         user = staff_request.user
         user.is_active = True
-        user.is_staff = True
-        user.role = 'station_master'
+        user.role = 'station_master'  # Set role to station_master to make is_staff=True
         user.save()
 
 class RejectAllStaffRequestsView(APIView):
