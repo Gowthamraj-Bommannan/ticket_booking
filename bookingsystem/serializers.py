@@ -2,11 +2,14 @@ from rest_framework import serializers
 from .models import Booking
 from stations.models import Station
 from .services import validate_booking_request
+from exceptions.handlers import FromAndToMustBeDifferent, StationNotFoundException
 from utils.constants import BookingMessage
-from exceptions.handlers import (StationNotFoundException,
-                                 FromAndToMustBeDifferent)
 
 class BookingSerializer(serializers.ModelSerializer):
+    """
+    Serializes booking data for API usage.
+    Handles validation and representation.
+    """
     from_station_code = serializers.CharField(write_only=True)
     to_station_code = serializers.CharField(write_only=True)
     from_station = serializers.CharField(source='from_station.code', read_only=True)
@@ -36,6 +39,10 @@ class BookingSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, data):
+        """
+        Validates booking request data.
+        Checks for duplicate stations, invalid class type, and station existence.
+        """
         from_code = data.get('from_station_code', '').strip().upper()
         to_code = data.get('to_station_code', '').strip().upper()
         class_type = data.get('class_type', 'GENERAL')

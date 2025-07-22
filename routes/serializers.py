@@ -11,7 +11,8 @@ logger = logging.getLogger("routes")
 
 class RouteEdgeSerializer(serializers.ModelSerializer):
     """
-    Validates all the route related fields and ensures the reduced redundancy.
+    Serializes route edge data for API usage.
+    Handles validation and representation.
     """
     from_station = serializers.CharField()
     to_station = serializers.CharField()
@@ -22,7 +23,8 @@ class RouteEdgeSerializer(serializers.ModelSerializer):
 
     def validate_distance(self, value):
         """
-        Vlidates the distance is positive integer.
+        Validates the distance is positive integer.
+        Raises error if invalid.
         """
         if value <= 0:
             raise RouteInvalidDistanceException()
@@ -70,6 +72,10 @@ class RouteEdgeSerializer(serializers.ModelSerializer):
         return rep
     
 class RouteTemplateSerializer(serializers.ModelSerializer):
+    """
+    Serializes route template data for API usage.
+    Handles validation and representation.
+    """
     from_station = serializers.CharField()
     to_station = serializers.CharField()
 
@@ -78,6 +84,10 @@ class RouteTemplateSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'from_station', 'to_station', 'category', 'stops']
 
     def validate(self, request):
+        """
+        Validates the route template data.
+        Raises error if invalid.
+        """
         from_code = request.get('from_station')
         to_code = request.get('to_station')
         category = request.get('category')
@@ -121,6 +131,9 @@ class RouteTemplateSerializer(serializers.ModelSerializer):
         return request
     
     def to_representation(self, instance):
+        """
+        Converts the route template data to a readable format.
+        """
         rep = super().to_representation(instance)
         rep['from_station'] = instance.from_station.code
         rep['to_station'] = instance.to_station.code

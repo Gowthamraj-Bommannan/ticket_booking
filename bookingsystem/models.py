@@ -5,7 +5,10 @@ from django.utils import timezone
 User = get_user_model()
 
 class Booking(models.Model):
-    """Booking model for train reservations"""
+    """
+    Booking model for train reservations.
+    Stores passenger, train, and payment details.
+    """
 
     CLASS_CHOICES = [
         ('GENERAL', 'General'),

@@ -32,17 +32,24 @@ class IsAdminSuperUser(BasePermission):
 
 class RouteEdgeViewSet(viewsets.ModelViewSet):
     """
-    Provides CRUD for route edges in the endpoints.
-    Only admin users can create, update, and delete route edges.
+    ViewSet for managing route edges.
+    Supports CRUD operations and custom actions.
     """
     queryset = RouteEdge.objects.filter(is_active=True)
     serializer_class = RouteEdgeSerializer
 
     def get_queryset(self):
+        """
+        Returns the queryset of active route edges.
+        """
         qs = super().get_queryset()
         return qs.filter(is_active=True)
 
     def create(self, request, *args, **kwargs):
+        """
+        Creates a new route edge.
+        Validates and processes route edge data.
+        """
         if not IsAdminSuperUser().has_permission(request, self):
             logger.error("You do not have permission to create route edges")
             raise RoutePermissionDeniedException(RouteMessage
@@ -54,6 +61,10 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
+        """
+        Updates a route edge.
+        Validates and processes route edge data.
+        """
         if not IsAdminSuperUser().has_permission(request, self):
             logger.error("You do not have permission to update route edges")
             raise RoutePermissionDeniedException(RouteMessage
@@ -67,6 +78,10 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     def destroy(self, request, *args, **kwargs):
+        """
+        Deletes a route edge.
+        Marks the edge as inactive.
+        """
         if not IsAdminSuperUser().has_permission(request, self):
             logger.warn("You do not have permission to delete route edges")
             raise RoutePermissionDeniedException(RouteMessage
@@ -78,6 +93,10 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['post'], url_path='add-between')
     def add_between(self, request):
+        """
+        Adds a new route edge between two stations.
+        Validates and processes route edge data.
+        """
         self._check_admin_permission(request.user)
         from_station, to_station, distance, is_bidirectional = self._validate_add_between_input(request.data)
         self._check_existing_edges(from_station, to_station, is_bidirectional)
@@ -97,11 +116,19 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     
     def _check_admin_permission(self, user):
+        """
+        Checks if the user has admin permissions.
+        Raises error if not authorized.
+        """
         if not (user and user.is_authenticated and getattr(user, 'role', None) == 'admin'):
             logger.warning(f"User {getattr(user, 'username', 'Anonymous')} is not authorized to add route edges.")
             raise RoutePermissionDeniedException("Only admin users can add route edges.")
 
     def _validate_add_between_input(self, data):
+        """
+        Validates the input data for adding a route edge.
+        Raises error if invalid.
+        """
         from_code = data.get('from_station')
         to_code = data.get('to_station')
         distance = data.get('distance')
@@ -129,6 +156,10 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
         return from_station, to_station, distance, is_bidirectional
 
     def _check_existing_edges(self, from_station, to_station, is_bidirectional):
+        """
+        Checks if an edge already exists between the two stations.
+        Raises error if it does.
+        """
         if is_bidirectional:
             if RouteEdge.objects.filter(
                 from_station=from_station, to_station=to_station, is_bidirectional=True, is_active=True
@@ -145,6 +176,10 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
                 raise RouteAlreadyExistsException("A unidirectional edge in this direction already exists.")
 
     def _split_existing_edge(self, from_station, to_station, distance, is_bidirectional):
+        """
+        Splits an existing edge into two new edges.
+        Raises error if it does.
+        """
         existing_edge = RouteEdge.objects.filter(
             from_station=from_station, is_active=True
         ).exclude(to_station=to_station).first()
@@ -172,6 +207,10 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
         return None
 
     def _create_new_edge(self, from_station, to_station, distance, is_bidirectional):
+        """
+        Creates a new edge between two stations.
+        Raises error if it does.
+        """
         new_edge = RouteEdge.objects.create(
             from_station=from_station,
             to_station=to_station,
@@ -183,11 +222,19 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
         return new_edge
     
 class RouteTemplateViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing route templates.
+    Supports CRUD operations and custom actions.
+    """
     queryset = RouteTemplate.objects.all()
     serializer_class = RouteTemplateSerializer
     permission_classes = [IsAdminSuperUser]
 
     def create(self, request, *args, **kwargs):
+        """
+        Creates a new route template.
+        Validates and processes route template data.
+        """
         logger.info(f"Attempting to create route template with data: {request.data}")
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -213,6 +260,11 @@ class RouteTemplateViewSet(viewsets.ModelViewSet):
         return Response(response_data, status=status.HTTP_201_CREATED)
     
     def _get_stops_for_route(self, from_station, to_station):
+        """
+        Computes the stops for a route between two stations.
+        Uses Dijkstra's algorithm to find the shortest path.
+        Returns a list of Station objects in the order of the route.
+        """
         edges = RouteEdge.objects.filter(is_active=True)
         graph = {}
         for edge in edges:

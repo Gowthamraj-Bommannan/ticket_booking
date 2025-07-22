@@ -2,6 +2,10 @@ from django.db import models
 from bookingsystem.models import Booking
 
 class PaymentTransaction(models.Model):
+    """
+    Represents a payment transaction for a booking.
+    Stores payment status, amount, and related booking.
+    """
     STATUS_CHOICES = [
         ('SUCCESS', 'SUCCESS'),
         ('FAILED', 'FAILED'),

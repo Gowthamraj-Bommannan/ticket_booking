@@ -2,6 +2,10 @@ from django.db import models
 from stations.models import Station
 
 class RouteEdge(models.Model):
+    """
+    Represents a direct connection (edge) between two stations.
+    Used for route pathfinding and validation.
+    """
     from_station = models.ForeignKey(Station, on_delete=models.CASCADE, related_name='edges_from')
     to_station = models.ForeignKey(Station, on_delete=models.CASCADE, related_name='edges_to')
     distance = models.PositiveIntegerField()
@@ -18,6 +22,10 @@ class RouteEdge(models.Model):
         return f"{self.from_station} to {self.to_station} ({self.distance} km)"
     
 class RouteTemplate(models.Model):
+    """
+    Template for a train route, including stops and category.
+    Used to generate train schedules.
+    """
     CATEGORY_CHOICES = [
         ('local', 'local'),
         ('fast', 'fast')

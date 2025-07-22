@@ -467,7 +467,6 @@ class BookingHistoryView(APIView):
 class StaffRequestListView(generics.ListAPIView):
     """
     Handles listing of pending staff requests for admin approval.
-    
     This view provides admin functionality to view all pending staff registration
     requests that require approval. Only accessible by admin users.
     """
@@ -477,12 +476,8 @@ class StaffRequestListView(generics.ListAPIView):
     def get_queryset(self):
         """
         Returns filtered queryset of pending staff requests.
-        
         Filters staff requests to show only those with 'pending' status
         and includes related user data for efficient querying.
-        
-        Returns:
-            QuerySet: Filtered staff requests with pending status
         """
         logger.debug(f"Admin {self.request.user.username} (ID: {self.request.user.id}) requested staff requests list")
         return StaffRequest.objects.filter(status='pending').select_related('user')
@@ -490,7 +485,6 @@ class StaffRequestListView(generics.ListAPIView):
 class StaffRequestDetailView(generics.RetrieveAPIView):
     """
     Handles retrieval of individual staff request details.
-    
     This view provides admin functionality to view detailed information
     about a specific staff request including user data and request history.
     """
@@ -501,17 +495,8 @@ class StaffRequestDetailView(generics.RetrieveAPIView):
     def get(self, request, *args, **kwargs):
         """
         Retrieves detailed information about a specific staff request.
-        
         Returns comprehensive staff request data including user information,
         request status, timestamps, and processing details.
-        
-        Args:
-            request: HTTP request object
-            *args: Additional positional arguments
-            **kwargs: Additional keyword arguments containing request ID
-            
-        Returns:
-            Response: Detailed staff request information
         """
         logger.debug(f"Admin {request.user.username} (ID: {request.user.id}) requested staff request detail for ID: {kwargs.get('pk')}")
         return super().get(request, *args, **kwargs)
@@ -519,7 +504,6 @@ class StaffRequestDetailView(generics.RetrieveAPIView):
 class ApproveStaffRequestView(APIView):
     """
     Handles approval of staff registration requests.
-    
     This view provides admin functionality to approve pending staff requests,
     activate user accounts, and grant staff permissions. Only accessible by admin users.
     """
@@ -528,16 +512,8 @@ class ApproveStaffRequestView(APIView):
     def post(self, request, pk):
         """
         Approves a specific staff registration request.
-        
         Validates admin permissions, finds the staff request, updates its status
         to approved, activates the user account, and grants staff permissions.
-        
-        Args:
-            request: HTTP request object
-            pk: Primary key of the staff request to approve
-            
-        Returns:
-            Response: Success confirmation message
         """
         if not request.user.role or request.user.role != 'admin':
             logger.warning(f"Unauthorized access attempt to approve staff request by user {request.user.username} (ID: {request.user.id})")
@@ -562,7 +538,6 @@ class ApproveStaffRequestView(APIView):
 class RejectStaffRequestView(APIView):
     """
     Handles rejection of staff registration requests.
-    
     This view provides admin functionality to reject pending staff requests
     and deactivate associated user accounts. Only accessible by admin users.
     """
@@ -571,16 +546,8 @@ class RejectStaffRequestView(APIView):
     def post(self, request, pk):
         """
         Rejects a specific staff registration request.
-        
         Validates admin permissions, finds the staff request, updates its status
         to rejected, and deactivates the user account.
-        
-        Args:
-            request: HTTP request object
-            pk: Primary key of the staff request to reject
-            
-        Returns:
-            Response: Success confirmation message
         """
         try:
             staff_request = get_object_or_404(StaffRequest, pk=pk, status='pending')
@@ -610,15 +577,8 @@ class ApproveAllStaffRequestsView(APIView):
     def post(self, request):
         """
         Approves all pending staff registration requests.
-        
         Finds all pending staff requests, approves them in bulk, activates
         associated user accounts, and grants staff permissions to all.
-        
-        Args:
-            request: HTTP request object
-            
-        Returns:
-            Response: Success confirmation with count of approved requests
         """
         pending_requests = StaffRequest.objects.filter(status='pending')
         approved_count = self._approve_staff_requests(pending_requests, request.user)
@@ -653,7 +613,6 @@ class ApproveAllStaffRequestsView(APIView):
 class RejectAllStaffRequestsView(APIView):
     """
     Handles bulk rejection of all pending staff requests.
-    
     This view provides admin functionality to reject all pending staff requests
     in a single operation, deactivating multiple user accounts simultaneously.
     """
@@ -662,15 +621,8 @@ class RejectAllStaffRequestsView(APIView):
     def post(self, request):
         """
         Rejects all pending staff registration requests.
-        
         Finds all pending staff requests, rejects them in bulk, and deactivates
         associated user accounts.
-        
-        Args:
-            request: HTTP request object
-            
-        Returns:
-            Response: Success confirmation with count of rejected requests
         """
         pending_requests = StaffRequest.objects.filter(status='pending')
         rejected_count = self._reject_staff_requests(pending_requests, request.user)
@@ -706,15 +658,8 @@ class RejectAllStaffRequestsView(APIView):
 def user_tickets(request):
     """
     Retrieves all ticket bookings for the authenticated user.
-    
     This function provides user access to their booking history and ticket information.
     Only accessible by users with 'user' role, not staff or admin users.
-    
-    Args:
-        request: HTTP request object
-        
-    Returns:
-        Response: Serialized list of user's booking data
     """
     if getattr(request.user, 'role', None) != 'user':
         logger.warning(f"Unauthorized access attempt to user tickets by {request.user.username} (ID: {request.user.id}) with role: {getattr(request.user, 'role', 'None')}")

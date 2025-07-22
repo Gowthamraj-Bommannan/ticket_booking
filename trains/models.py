@@ -17,7 +17,6 @@ class Train(models.Model):
         ('Fast', 'fast'),
         ('AC', 'ac')
     ]
-    
     train_number = models.CharField(max_length=10, unique=True, blank=True)
     name = models.CharField(max_length=200)
     train_type = models.CharField(max_length=20, choices=TRAIN_TYPE_CHOICES)
@@ -63,28 +62,12 @@ class Train(models.Model):
         verbose_name_plural = 'Trains'
         ordering = ['train_number']
 
-class TrainClass(models.Model):
-    """
-    Represents a class (e.g., AC, Sleeper) and seat capacity for a train.
-    """
-    CLASS_TYPE_CHOICES = [
-        ('GENERAL', 'General'),
-        ('FC', 'fc'),
-    ]
-    train = models.ForeignKey(Train, on_delete=models.CASCADE, related_name='classes')
-    class_type = models.CharField(max_length=20, choices=CLASS_TYPE_CHOICES)
-
-    def __str__(self):
-        return f"{self.train.name} - {self.class_type})"
-
-    class Meta:
-        db_table = 'train_class'
-        verbose_name = 'Train Class'
-        verbose_name_plural = 'Train Classes'
-        unique_together = ('train', 'class_type')
-        ordering = ['train', 'class_type']
-
 class TrainSchedule(models.Model):
+    """
+    Represents a train schedule with its train, route template, days of week,
+    start time, stops with time, direction, and status.
+    Supports soft delete via is_active.
+    """
     train = models.ForeignKey(Train, on_delete=models.CASCADE, related_name='schedules')
     route_template = models.ForeignKey(RouteTemplate, on_delete=models.CASCADE)
     days_of_week = models.CharField(max_length=20)

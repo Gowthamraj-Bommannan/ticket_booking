@@ -8,7 +8,7 @@ from stations.models import Station
 from routes.models import RouteEdge
 from utils.constants import RouteMessage
 from django.http import Http404
-from .models import Train, TrainClass, TrainSchedule
+from .models import Train, TrainSchedule
 from .serializers import (TrainSerializer, TrainCreateUpdateSerializer,
                           TrainScheduleSerializer)
 from utils.constants import TrainMessage
@@ -26,6 +26,9 @@ class IsAdminSuperUser(BasePermission):
     Allows access only to admin users.
     """
     def has_permission(self, request, view):
+        """
+        Checks if the user has admin permissions.
+        """
         return bool(
             request.user and 
             request.user.is_authenticated and
@@ -33,11 +36,18 @@ class IsAdminSuperUser(BasePermission):
         )
 
 class TrainViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing trains.
+    Supports CRUD operations and custom actions.
+    """
     queryset = Train.objects.all()
     lookup_field = 'train_number'
 
     
     def get_serializer_class(self):
+        """
+        Serializer for creation and updation of trains.
+        """
         if self.action in ['create', 'update', 'partial_update']:
             return TrainCreateUpdateSerializer
         return TrainSerializer
@@ -53,6 +63,9 @@ class TrainViewSet(viewsets.ModelViewSet):
         return qs
     
     def get_object(self):
+        """
+        Return the object if present else raises 404.
+        """
         try:
             return super().get_object()
         except Http404:
@@ -69,13 +82,10 @@ class TrainViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
-        classes_data = validated_data.pop('classes')
         if 'train_number' in validated_data:
             if Train.all_objects.filter(train_number=validated_data['train_number']).exists():
                 raise TrainAlreadyExistsException()
         train = Train.objects.create(**validated_data)
-        for class_data in classes_data:
-            TrainClass.objects.create(train=train, **class_data)
         response_serializer = TrainSerializer(train)
         logger.info(f"Train created successfully: {train.train_number}")
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)
@@ -86,13 +96,9 @@ class TrainViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(instance, data=request.data, partial=kwargs.get('partial', False))
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
-        classes_data = validated_data.pop('classes', [])
         instance.name = validated_data.get('name', instance.name)
         instance.train_type = validated_data.get('train_type', instance.train_type)
         instance.save()
-        instance.classes.all().delete()
-        for class_data in classes_data:
-            TrainClass.objects.create(train=instance, **class_data)
         response_serializer = TrainSerializer(instance)
         logger.info(f"Train updated successfully: {instance.train_number}")
         return Response(response_serializer.data)
@@ -108,11 +114,21 @@ class TrainViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_204_NO_CONTENT)
     
 class TrainScheduleViewSet(viewsets.ModelViewSet):
+    """
+    Handles CRUD operations for TrainSchedule.
+    Supports schedule creation, update, validation, and retrieval.
+    Includes logic for pathfinding and conflict checking.
+    """
     queryset = TrainSchedule.objects.all()
     serializer_class = TrainScheduleSerializer
     permission_classes = [IsAdminSuperUser]
 
     def create(self, request, *args, **kwargs):
+        """
+        Create a new schedule for a train with validations.
+        Calculates stops, distances, timings, and checks for overlaps.
+        Handles fast/local routes and bidirectional paths.
+        """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
@@ -308,6 +324,10 @@ class TrainScheduleViewSet(viewsets.ModelViewSet):
         return result
     
     def update(self, request, *args, **kwargs):
+        """
+        Updates an existing train schedule with all validations.
+        Ensures no overlaps or invalid directional flows.
+        """
         instance = self.get_object()
         partial = kwargs.get('partial', False)
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
@@ -432,6 +452,10 @@ class TrainScheduleViewSet(viewsets.ModelViewSet):
         return Response(response.data)
     
     def destroy(self, request, *args, **kwargs):
+        """
+        Soft deletes a train schedule by marking it inactive.
+        Validates if already inactive before deletion.
+        """
         instance = self.get_object()
         if not instance.is_active:
             logger.error(f"Train schedule {instance.id} is already inactive.")
@@ -447,7 +471,8 @@ class TrainScheduleViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='by-train/(?P<train_number>[^/]+)')
     def schedule_by_train(self, request, train_number=None):
         """
-        Returns all the schedules of a train.
+        Returns all active schedules for a given train number.
+        Raises exception if the train is not found.
         """
         train = Train.objects.filter(train_number=train_number).first()
         if not train:

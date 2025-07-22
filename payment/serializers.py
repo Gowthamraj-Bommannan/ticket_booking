@@ -26,7 +26,8 @@ class PaymentTransactionSerializer(serializers.ModelSerializer):
 
     def validate_amount(self, value):
         """
-        Validates that the amount is greater than zero.
+        Validates that the payment amount is positive.
+        Raises error if invalid.
         """
         if value <= 0:
             raise serializers.ValidationError('Amount must be greater than zero.')

@@ -8,10 +8,12 @@ from django.utils import timezone
 from .models import Booking
 from .serializers import BookingSerializer
 from stations.models import Station
-from exceptions.handlers import (StationNotFoundException,
-                                 FromAndToMustBeDifferent, NewToStationRequired,
-                                 OnlyBookedTicketsExchanged, FromAndToStationsRequired,
-                                 BookingUnauthorizedException)
+from exceptions.handlers import (
+    StationNotFoundException,
+    FromAndToMustBeDifferent, NewToStationRequired,
+    OnlyBookedTicketsExchanged, FromAndToStationsRequired,
+    BookingUnauthorizedException
+)
 from .services import (
     generate_unique_ticket_number, 
     calculate_fare, 
@@ -29,6 +31,10 @@ class IsRegularUser(IsAuthenticated):
         return is_authenticated
 
 class BookingViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing bookings.
+    Supports CRUD operations and custom actions.
+    """
     queryset = Booking.objects.all()
     serializer_class = BookingSerializer
     permission_classes = [IsRegularUser]
@@ -40,6 +46,10 @@ class BookingViewSet(viewsets.ModelViewSet):
         return Booking.objects.filter(user=self.request.user).order_by('-created_at')
     
     def create(self, request, *args, **kwargs):
+        """
+        Handles booking creation requests.
+        Validates and creates a new booking.
+        """
         if request.user.is_staff or request.user.is_superuser:
             logger.warning(f"Admin/staff user {request.user} attempted to create a booking.")
             return Response({'detail': 'Admins and staff cannot create bookings.'}, status=status.HTTP_403_FORBIDDEN)
@@ -111,7 +121,10 @@ class BookingViewSet(viewsets.ModelViewSet):
         })
 
     def list(self, request, *args, **kwargs):
-        """List all bookings for the current user"""
+        """
+        Lists all bookings.
+        Supports filtering and pagination.
+        """
         queryset = self.get_queryset()
         serializer = self.get_serializer(queryset, many=True)
         
@@ -130,7 +143,10 @@ class BookingViewSet(viewsets.ModelViewSet):
         })
 
     def retrieve(self, request, *args, **kwargs):
-        """Only allow users to retrieve their own bookings"""
+        """
+        Retrieves a booking by ID.
+        Returns booking details.
+        """
         booking = self.get_object()
         if booking.user != request.user and not (request.user.is_staff or request.user.is_superuser):
             logger.warning(f"User {request.user} attempted to access booking {booking.id} belonging to {booking.user}")
@@ -139,6 +155,10 @@ class BookingViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     def update(self, request, *args, **kwargs):
+        """
+        Handles booking update requests.
+        Updates booking details or status.
+        """
         return Response({'detail': 'Ticket update is not allowed.'},
                         status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
@@ -185,7 +205,10 @@ class BookingViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
     def destroy(self, request, *args, **kwargs):
-        """Disable destroy method - no cancellation for local train tickets"""
+        """
+        Deletes a booking.
+        Removes booking record from database.
+        """
         return Response({
             'error': 'Cancellation is not allowed for local train tickets. Use ticket exchange if needed.'
         }, status=status.HTTP_405_METHOD_NOT_ALLOWED)

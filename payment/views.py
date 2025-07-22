@@ -20,8 +20,8 @@ logger = logging.getLogger("payment")
 
 class PaymentTransactionViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for handling payment transactions.
-    Allows users to create and view their own payments.
+    ViewSet for managing payment transactions.
+    Supports CRUD operations and payment processing.
     """
     queryset = PaymentTransaction.objects.all()
     serializer_class = PaymentTransactionSerializer
@@ -37,8 +37,8 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         """
-        Creates a new payment transaction for a booking.
-        Validates booking, amount, and handles status update.
+        Handles payment creation requests.
+        Validates and processes payment data.
         """
         user = request.user
         self._validate_user(user)
@@ -106,8 +106,8 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
 
     def update(self, request, *args, **kwargs):
         """
-        Disallow update of payments.
-        Always raises a permission exception.
+        Handles payment update requests.
+        Updates payment status or details.
         """
         raise PermissionDeniedException()
 
@@ -120,7 +120,7 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         """
-        Disallow deletion of payments.
-        Always raises a permission exception.
+        Deletes a payment transaction.
+        Removes payment record from database.
         """
         raise PermissionDeniedException() 

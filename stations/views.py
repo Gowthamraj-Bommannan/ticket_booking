@@ -17,7 +17,6 @@ import logging
 
 logger = logging.getLogger("stations")
 
-# Expose StationViewSet for router registration
 __all__ = ['StationViewSet', 'IsAdminUser', 'IsAdminOrStationMaster']
 
 class IsAdminUser(BasePermission):
@@ -98,6 +97,10 @@ class StationViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='assign-master')
     def assign_master(self, request, code=None):
+        """
+        Assigns a station master to a station.
+        Validates and processes station master data.
+        """
         logger.info(f"Attempting to assign master for station with code: {code}")
         station = self.get_object()
         serializer = AssignStationMasterSerializer(data=request.data)
@@ -123,6 +126,10 @@ class StationViewSet(viewsets.ModelViewSet):
         return Response({'detail': 'Station master assigned successfully.'})
 
     def destroy(self, request, *args, **kwargs):
+        """
+        Soft deletes a station.
+        Merges route edges if the station is a junction.
+        """
         code = kwargs.get('code')
         logger.info(f"Attempting to soft delete (deactivate) station with code: {code}")
         station = self.get_object()
@@ -161,6 +168,10 @@ class StationViewSet(viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def create(self, request, *args, **kwargs):
+        """
+        Creates a new station.
+        Validates and processes station data.
+        """
         logger.info(f"Attempting to create station with data: {request.data}")
         code = request.data.get('code')
         name = request.data.get('name')

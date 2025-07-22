@@ -1,10 +1,7 @@
-from decimal import Decimal
 import random, string
 from bookingsystem.models import Booking
-from trains.models import Train, TrainSchedule, TrainClass
-from stations.models import Station
+from trains.models import Train, TrainSchedule
 from django.utils import timezone
-from datetime import datetime, time
 import logging
 
 logger = logging.getLogger("booking_debug")
@@ -52,12 +49,13 @@ def check_train_availability(from_station, to_station, travel_date, class_type):
     day_of_week = travel_date.weekday()
     day_codes = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
     day_code = day_codes[day_of_week]
-    
+    valid_classes = ['GENERAL', 'FC']
+    if class_type.upper() not in valid_classes:
+        return []
     trains = Train.objects.filter(is_active=True)
     available_trains = []
     for train in trains:
-        if not train.classes.filter(class_type__iexact=class_type).exists():
-            continue
+        # All trains are available for both classes
         schedules = TrainSchedule.objects.filter(
             train=train,
             is_active=True,
