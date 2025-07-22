@@ -51,14 +51,9 @@ INSTALLED_APPS = [
     'accounts',
     'stations',
     'trains',
-    'routes',
     'bookingsystem',
     'payment',
-    # 'bookings',
-    # 'payments',
-    # 'notifications',
-    # 'reports',
-    # 'utils',
+    'routes',
 ]
 
 MIDDLEWARE = [
@@ -105,11 +100,6 @@ LOGGING = {
             'level': 'DEBUG',
             'propagate': False,
         },
-        'routes': {
-            'handlers': ['file', 'console'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
         'stations': {
             'handlers': ['file', 'console'],
             'level': 'DEBUG',
@@ -120,7 +110,7 @@ LOGGING = {
             'level': 'DEBUG',
             'propagate': False,
         },
-        'bookingsystem': {
+        'booking_debug': {
             'handlers': ['file', 'console'],
             'level': 'DEBUG',
             'propagate': False,
@@ -131,7 +121,7 @@ LOGGING = {
             'propagate': False,
         },
         'django': {
-            'handlers': ['file'],
+            'handlers': ['file', 'console'],
             'level': 'INFO',
             'propagate': False,
         },

@@ -22,7 +22,7 @@ urlpatterns = [
     path('', include('accounts.urls')),
     path('', include('stations.urls')),
     path('', include('trains.urls')),
-    path('', include('routes.urls')),
     path('', include('bookingsystem.urls')),
     path('', include('payment.urls')),
+    path('', include('routes.urls')),
 ]

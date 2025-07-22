@@ -2,61 +2,42 @@ from rest_framework.exceptions import APIException
 from rest_framework import status
 from rest_framework.views import exception_handler
 from rest_framework.response import Response
+from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from utils.constants import (AlreadyExistsMessage, UserMessage, GeneralMessage,
                              TrainMessage, StationMessage, RouteMessage, 
-                             PaymentMessage)
+                             PaymentMessage, BookingMessage)
 import logging
 logger = logging.getLogger("payment")
 
 
 def custom_exception_handler(exc, context):
-    # Handle our custom exceptions first
-    if isinstance(exc, (EmailAlreadyExists, UsernameAlreadyExists, 
-                        MobileNumberAlreadyExists, InvalidCredentials,
-                        InvalidOTPException, UnauthorizedAccessException,
-                        UserNotFoundException, DuplicateEmailException)):
-        return Response({
-            'success': False,
-            'error': exc.default_detail
-        }, status=exc.status_code)
-    
-    elif isinstance(exc, (AlreadyExists, NotFound, 
-                          InvalidInput, QueryParameterMissing)):
-        return Response({
-            'success': False,
-            'error': str(exc.detail) if hasattr(exc, 'detail') else str(exc)
-        }, status=exc.status_code)
-    
-    elif isinstance(exc, (
-        TrainNotFoundException, TrainAlreadyExistsException,
-        TrainAlreadyInactiveException, TrainAlreadyActiveException,
-        TrainInactiveException, StationNotFoundException,
-        StationAlreadyExistsException, StationAlreadyInactiveException,
-        StationAlreadyActiveException, StationInactiveException,
-        RouteNotFoundException, RouteAlreadyExistsException, RouteAlreadyDefinedException,
-        RouteStopNotFoundException, RouteStopAlreadyExistsException, RouteStopDuplicateSequenceException,
-        RouteStopInvalidSequenceException, RouteStopDepartureMustGreaterException, RouteStopStationInactiveException,
-        RouteStopTrainInactiveException, RouteStopInactiveException, RouteStopSequenceConflictException,
-        RouteStopStationConflictException, RouteStopInvalidInputException
-    )):
-        return Response({
-            'success': False,
-            'error': exc.default_detail,
-            'code': exc.default_code
-        }, status=exc.status_code)
+    # Handle Django's DoesNotExist as 404
+    if isinstance(exc, ObjectDoesNotExist):
+        return Response({'success': False, 'error': 'Not found.'}, 
+                        status=status.HTTP_404_NOT_FOUND)
 
-    # Handle DRF exceptions
+    # Handle Django and DRF validation errors as 400
+    if isinstance(exc, (DjangoValidationError, DRFValidationError)):
+        return Response({'success': False, 'error': exc.detail if 
+                         hasattr(exc, 'detail') else str(exc)}, 
+                         status=status.HTTP_400_BAD_REQUEST)
+
+    # Handle all APIException (including your custom ones)
+    if isinstance(exc, APIException):
+        detail = exc.detail if hasattr(exc, 'detail') else str(exc)
+        code = exc.status_code if hasattr(exc, 'status_code') else status.HTTP_400_BAD_REQUEST
+        return Response({'success': False, 'error': detail}, status=code)
+
+    # Fallback to DRF's default handler (for AuthenticationFailed, NotAuthenticated, etc.)
     response = exception_handler(exc, context)
     if response is not None:
-        response.data = {
-            'success': False,
-            'error': response.data
-        }
+        response.data = {'success': False, 'error': response.data}
         return response
-    
-    # Handle unexpected exceptions
+
+    # Catch-all for any other exception
     return Response({
-        'success': False, 
+        'success': False,
         'error': 'An unexpected error occurred.',
         'detail': str(exc)
     }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -177,92 +158,69 @@ class StationAlreadyExistsException(APIException):
     default_detail = StationMessage.STATION_ALREADY_EXISTS
     default_code = 'station_already_exists'
 
-class StationAlreadyInactiveException(APIException):
-    status_code = status.HTTP_400_BAD_REQUEST
-    default_detail = StationMessage.STATION_ALREADY_INACTIVE
-    default_code = 'station_already_inactive'
-
 class StationAlreadyActiveException(APIException):
     status_code = status.HTTP_400_BAD_REQUEST
     default_detail = StationMessage.STATION_ALREADY_ACTIVE
     default_code = 'station_already_active'
 
-class StationInactiveException(APIException):
+class StationMasterExistsException(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = StationMessage.STATION_MASTER_EXISTS
+    default_code = 'station_master_exists'
+
+class ScheduleAlreadyExists(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = TrainMessage.SCHEDULE_ALREADY_EXISTS
+    default_code = 'station_master_exists'
+
+class ScheduleNotFoundException(APIException):
     status_code = status.HTTP_404_NOT_FOUND
-    default_detail = StationMessage.STATION_INACTIVE_CANNOT_ACCESS
-    default_code = 'station_inactive'
+    default_detail = TrainMessage.TRAIN_SCHEDULE_NOT_FOUND
+    default_code = 'route_edge_not_found'
+
 
 # ---------- ROUTE/STOP EXCEPTIONS ----------
 class RouteNotFoundException(APIException):
     status_code = status.HTTP_404_NOT_FOUND
-    default_detail = RouteMessage.ROUTE_NOT_FOUND
-    default_code = 'route_not_found'
+    default_detail = RouteMessage.ROUTE_EDGE_NOT_FOUND
+    default_code = 'route_edge_not_found'
 
 class RouteAlreadyExistsException(APIException):
     status_code = status.HTTP_409_CONFLICT
-    default_detail = RouteMessage.ROUTE_ALREADY_EXISTS
-    default_code = 'route_already_exists'
+    default_detail = RouteMessage.ROUTE_EDGE_ALREADY_EXISTS
+    default_code = 'route_edge_already_exists'
 
-class RouteAlreadyDefinedException(APIException):
-    status_code = status.HTTP_409_CONFLICT
-    default_detail = RouteMessage.ROUTE_ALREADY_DEFINED
-    default_code = 'route_already_defined'
-
-class RouteStopNotFoundException(APIException):
-    status_code = status.HTTP_404_NOT_FOUND
-    default_detail = RouteMessage.ROUTE_STOP_NOT_FOUND
-    default_code = 'route_stop_not_found'
-
-class RouteStopAlreadyExistsException(APIException):
-    status_code = status.HTTP_409_CONFLICT
-    default_detail = RouteMessage.ROUTE_STOP_ALREADY_EXISTS
-    default_code = 'route_stop_already_exists'
-
-class RouteStopDuplicateSequenceException(APIException):
-    status_code = status.HTTP_409_CONFLICT
-    default_detail = RouteMessage.ROUTE_STOP_DUPLICATE_SEQUENCE
-    default_code = 'route_stop_duplicate_sequence'
-
-class RouteStopInvalidSequenceException(APIException):
+class RouteInvalidInputException(APIException):
     status_code = status.HTTP_400_BAD_REQUEST
-    default_detail = RouteMessage.ROUTE_STOP_INVALID_SEQUENCE
-    default_code = 'route_stop_invalid_sequence'
+    default_detail = RouteMessage.ROUTE_EDGE_INVALID_INPUT
+    default_code = 'route_edge_invalid_input'
 
-class RouteStopDepartureMustGreaterException(APIException):
+class RouteFromAndToSameException(APIException):
     status_code = status.HTTP_400_BAD_REQUEST
-    default_detail = RouteMessage.ROUTE_STOP_DEPARTURE_MUST_GREATER
-    default_code = 'route_stop_departure_must_greater'
+    default_detail = RouteMessage.ROUTE_EDGE_FROM_AND_TO_SAME
+    default_code = 'route_edge_from_and_to_same'
 
-class RouteStopStationInactiveException(APIException):
+class RouteInvalidDistanceException(APIException):
     status_code = status.HTTP_400_BAD_REQUEST
-    default_detail = RouteMessage.ROUTE_STOP_STATION_INACTIVE
-    default_code = 'route_stop_station_inactive'
+    default_detail = RouteMessage.ROUTE_EDGE_INVALID_DISTANCE
+    default_code = 'route_edge_invalid_distance'
 
-class RouteStopTrainInactiveException(APIException):
+class RoutePermissionDeniedException(APIException):
+    status_code = status.HTTP_403_FORBIDDEN
+    default_detail = "You do not have permission to perform this action."
+    default_code = 'route_permission_denied' 
+
+class RouteUnidrectionalException(APIException):
     status_code = status.HTTP_400_BAD_REQUEST
-    default_detail = RouteMessage.ROUTE_STOP_TRAIN_INACTIVE
-    default_code = 'route_stop_train_inactive'
+    default_detail = "A unidirectional edge in this direction already exists."
+    default_code = "unidirectional_route"
 
-class RouteStopInactiveException(APIException):
-    status_code = status.HTTP_404_NOT_FOUND
-    default_detail = RouteMessage.ROUTE_STOP_INACTIVE_CANNOT_ACCESS
-    default_code = 'route_stop_inactive'
-
-class RouteStopSequenceConflictException(APIException):
-    status_code = status.HTTP_409_CONFLICT
-    default_detail = RouteMessage.ROUTE_STOP_SEQUENCE_CONFLICT
-    default_code = 'route_stop_sequence_conflict'
-
-class RouteStopStationConflictException(APIException):
-    status_code = status.HTTP_409_CONFLICT
-    default_detail = RouteMessage.ROUTE_STOP_STATION_CONFLICT
-    default_code = 'route_stop_station_conflict'
-
-class RouteStopInvalidInputException(APIException):
+class RouteStopsNotFoundException(APIException):
     status_code = status.HTTP_400_BAD_REQUEST
-    default_detail = RouteMessage.ROUTE_STOP_INVALID_INPUT
-    default_code = 'route_stop_invalid_input'
- 
+    default_detail = "Train should have atleast one stop."
+    default_code = 'no_stops_found'
+
+# ---------- PAYMENT EXCEPTIONS ----------
 class PaymentFailedException(APIException):
     status_code = status.HTTP_400_BAD_REQUEST
     default_detail = PaymentMessage.PAYMENT_FAILED
@@ -308,8 +266,42 @@ class PaymentUnauthorizedException(APIException):
     default_detail = PaymentMessage.PAYMENT_UNAUTHORIZED
     default_code = 'payment_unauthorized'
 
+class PermissionDeniedException(APIException):
+    status_code = status.HTTP_403_FORBIDDEN
+    default_detail = GeneralMessage.PERMISSION_DENIED
+    default_code = 'permission_denied'
+
 class PaymentSessionExpiredException(APIException):
     status_code = status.HTTP_408_REQUEST_TIMEOUT
     default_detail = PaymentMessage.PAYMENT_SESSION_EXPIRED
     default_code = 'payment_session_expired'
- 
+
+class FromAndToMustBeDifferent(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = BookingMessage.FROM_AND_TO_MUST_BE_DIFFERENT
+    default_code = 'from_and_must_be_different' 
+
+class AtleastOnePassenegerRequired(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = BookingMessage.ATLEAST_ONE_PASSENGER_REQUIRED
+    default_code = 'atleast_one_passenger_required' 
+
+class NewToStationRequired(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = BookingMessage.NEW_TO_STATION_REQUIRED
+    default_code = 'new_to_station_required'
+
+class OnlyBookedTicketsExchanged(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = BookingMessage.BOOKED_TICKETS_CAN_BE_EXCHANGED
+    default_code = 'only_booked_tickets_can_be_exchanged'
+
+class FromAndToStationsRequired(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = BookingMessage.FROM_AND_TO_ARE_REQUIRED
+    default_code = 'both_from_and_to_stations_are_required'
+
+class BookingUnauthorizedException(APIException):
+    status_code = status.HTTP_403_FORBIDDEN
+    default_detail = BookingMessage.FORBIDDEN
+    default_code = "forbidden"

@@ -1,5 +1,5 @@
 from django.db import models
-from django.contrib.postgres.fields import ArrayField
+from routes.models import RouteTemplate
 import random
 
 class ActiveManager(models.Manager):
@@ -13,29 +13,14 @@ class Train(models.Model):
     Supports soft delete via is_active.
     """
     TRAIN_TYPE_CHOICES = [
-        ('Express', 'Express'),
-        ('Passenger', 'Passenger'),
-        ('Superfast', 'Superfast'),
-    ]
-    
-    RUNNING_DAYS_CHOICES = [
-        ('Mon', 'Monday'),
-        ('Tue', 'Tuesday'),
-        ('Wed', 'Wednesday'),
-        ('Thu', 'Thursday'),
-        ('Fri', 'Friday'),
-        ('Sat', 'Saturday'),
-        ('Sun', 'Sunday'),
+        ('Local', 'local'),
+        ('Fast', 'fast'),
+        ('AC', 'ac')
     ]
     
     train_number = models.CharField(max_length=10, unique=True, blank=True)
     name = models.CharField(max_length=200)
     train_type = models.CharField(max_length=20, choices=TRAIN_TYPE_CHOICES)
-    running_days = ArrayField(
-        models.CharField(max_length=3, choices=RUNNING_DAYS_CHOICES),
-        size=7,
-        help_text="Days when the train runs (e.g., ['Mon', 'Tue', 'Fri'])"
-    )
     is_active = models.BooleanField(default=True, help_text="Indicates if the train is active or soft deleted")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -73,6 +58,7 @@ class Train(models.Model):
         return f"{self.name} ({self.train_number}){status}"
 
     class Meta:
+        db_table = 'trains'
         verbose_name = 'Train'
         verbose_name_plural = 'Trains'
         ordering = ['train_number']
@@ -82,20 +68,38 @@ class TrainClass(models.Model):
     Represents a class (e.g., AC, Sleeper) and seat capacity for a train.
     """
     CLASS_TYPE_CHOICES = [
-        ('General', 'General'),
-        ('Sleeper', 'Sleeper'),
-        ('AC', 'AC'),
+        ('GENERAL', 'General'),
+        ('FC', 'fc'),
     ]
-    
     train = models.ForeignKey(Train, on_delete=models.CASCADE, related_name='classes')
     class_type = models.CharField(max_length=20, choices=CLASS_TYPE_CHOICES)
-    seat_capacity = models.PositiveIntegerField(help_text="Number of seats available in this class")
 
     def __str__(self):
-        return f"{self.train.name} - {self.class_type} ({self.seat_capacity} seats)"
+        return f"{self.train.name} - {self.class_type})"
 
     class Meta:
+        db_table = 'train_class'
         verbose_name = 'Train Class'
         verbose_name_plural = 'Train Classes'
         unique_together = ('train', 'class_type')
         ordering = ['train', 'class_type']
+
+class TrainSchedule(models.Model):
+    train = models.ForeignKey(Train, on_delete=models.CASCADE, related_name='schedules')
+    route_template = models.ForeignKey(RouteTemplate, on_delete=models.CASCADE)
+    days_of_week = models.CharField(max_length=20)
+    start_time = models.TimeField()
+    stops_with_time = models.JSONField(default=list, blank=True)
+    direction = models.CharField(max_length=10, choices=[('up', 'Up'), ('down', 'Down')])
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'train_schedules'
+        verbose_name = 'Train Schedule'
+        verbose_name_plural = 'Train Schedules'
+        ordering = ['train', 'start_time']
+
+    def __str__(self):
+        return f"{self.train} on {self.route_template} at {self.start_time}"

@@ -1,125 +1,119 @@
 from decimal import Decimal
 import random, string
-from bookingsystem.models import Booking, Passenger
-from trains.models import TrainClass
-from routes.models import TrainRouteStop
-from django.db.models import Q
+from bookingsystem.models import Booking
+from trains.models import Train, TrainSchedule, TrainClass
+from stations.models import Station
+from django.utils import timezone
+from datetime import datetime, time
+import logging
 
-def get_booked_seats(train_id, class_type, travel_date, segment):
-    """
-    Return all seat_numbers already assigned on overlapping bookings for the given segment.
-    Segment: (source_station, destination_station)
-    """
-    source_station, dest_station = segment
-    source_stop = TrainRouteStop.objects.filter(train_id=train_id, station=source_station).first()
-    dest_stop = TrainRouteStop.objects.filter(train_id=train_id, station=dest_station).first()
-    if not source_stop or not dest_stop:
-        return set()  # No route info, so no seats booked
-    bookings = Booking.objects.filter(
-        train_id=train_id,
-        class_type=class_type,
-        travel_date=travel_date,
-        booking_status__in=['CONFIRMED', 'RAC']
-    )
-    booked_seats = set()
-    for booking in bookings:
-        b_source_stop = TrainRouteStop.objects.filter(train_id=train_id, station=booking.source_station).first()
-        b_dest_stop = TrainRouteStop.objects.filter(train_id=train_id, station=booking.destination_station).first()
-        if not b_source_stop or not b_dest_stop:
-            continue
-        # Overlap if not (A ends before B starts or A starts after B ends)
-        if not (b_dest_stop.sequence <= source_stop.sequence or b_source_stop.sequence >= dest_stop.sequence):
-            for p in booking.passengers.all():
-                if p.seat_number:
-                    booked_seats.add(p.seat_number)
-    return booked_seats
+logger = logging.getLogger("booking_debug")
 
-def assign_seats(booking):
-    """
-    Assign seats to passengers in a booking based on availability, quota, and preferences.
-    Honors berth preference (lower for elderly >60), assigns berth_type, and ensures no duplicate seat numbers.
-    """
-    train = booking.train
-    class_type = booking.class_type
-    travel_date = booking.travel_date
-    source = booking.source_station
-    dest = booking.destination_station
-    segment = (source, dest)
-    try:
-        train_class = TrainClass.objects.get(train=train, class_type=class_type)
-        total_seats = train_class.seat_capacity
-    except TrainClass.DoesNotExist:
-        total_seats = 0
-    booked_seats = get_booked_seats(train.id, class_type, travel_date, segment)
-    # Berth types for assignment
-    berth_types = ['LB', 'MB', 'UB', 'SL', 'SU']
-    available_seats = [f"{class_type[0]}{i+1:03d}" for i in range(total_seats) if f"{class_type[0]}{i+1:03d}" not in booked_seats]
-    available_berths = berth_types * (total_seats // len(berth_types) + 1)
-    assigned = set()
-    # Elderly first pass
-    elderly = [p for p in booking.passengers.all() if p.age >= 60 and p.berth_preference == 'LB']
-    others = [p for p in booking.passengers.all() if p not in elderly]
-    idx = 0
-    for passenger in elderly:
-        # Assign lower berth if available
-        if idx < len(available_seats):
-            passenger.seat_number = available_seats[idx]
-            passenger.berth_type = 'LB'
-            passenger.booking_status = 'CONFIRMED'
-            assigned.add(passenger.seat_number)
-            idx += 1
-        else:
-            passenger.seat_number = None
-            passenger.berth_type = None
-            passenger.booking_status = 'RAC' if idx < len(available_seats) + 10 else 'WL'
-        passenger.save()
-    # Others
-    for passenger in others:
-        if idx < len(available_seats):
-            passenger.seat_number = available_seats[idx]
-            passenger.berth_type = passenger.berth_preference if passenger.berth_preference in berth_types else available_berths[idx % len(berth_types)]
-            passenger.booking_status = 'CONFIRMED'
-            assigned.add(passenger.seat_number)
-            idx += 1
-        else:
-            passenger.seat_number = None
-            passenger.berth_type = None
-            passenger.booking_status = 'RAC' if idx < len(available_seats) + 10 else 'WL'
-        passenger.save()
-
-def release_seats_and_promote(booking):
-    """
-    On cancellation, release seats and auto-promote RAC/WL for the same train/date/class.
-    """
-    # Release seats for cancelled booking
-    for p in booking.passengers.all():
-        p.seat_number = None
-        p.berth_type = None
-        p.booking_status = 'CANCELLED'
-        p.save()
-    # Promote RAC/WL for this train/date/class
-    train = booking.train
-    class_type = booking.class_type
-    travel_date = booking.travel_date
-    # Get all bookings in RAC/WL order
-    rac_bookings = Booking.objects.filter(
-        train=train, class_type=class_type, travel_date=travel_date, booking_status='RAC'
-    ).order_by('created_at')
-    wl_bookings = Booking.objects.filter(
-        train=train, class_type=class_type, travel_date=travel_date, booking_status='WL'
-    ).order_by('created_at')
-    # Try to promote RAC to CONFIRMED, WL to RAC
-    for rac_booking in rac_bookings:
-        assign_seats(rac_booking)
-        rac_booking.save()
-    for wl_booking in wl_bookings:
-        assign_seats(wl_booking)
-        wl_booking.save()
-
-def generate_unique_pnr():
-    """Generate a unique 10-digit alphanumeric PNR number."""
-    from bookingsystem.models import Booking
+def generate_unique_ticket_number():
+    """Generate a unique 8-digit ticket number."""
     while True:
-        pnr = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-        if not Booking.objects.filter(pnr_number=pnr).exists():
-            return pnr 
+        number = ''.join(random.choices(string.digits, k=8))
+        if not Booking.objects.filter(ticket_number=number).exists():
+            return number
+
+def calculate_fare(class_type, num_passengers):
+    """Calculate fare for local train booking."""
+    base_rate = 10
+    multiplier = 2 if class_type.upper() == 'FC' else 1
+    return base_rate * multiplier * num_passengers
+
+def cancel_booking(booking):
+    """Cancel a local train booking."""
+    if booking.booking_status == 'FAILED':
+        return False, "Booking is already cancelled."
+    
+    booking.booking_status = 'FAILED'
+    booking.save()
+    return True, "Booking cancelled successfully."
+
+def get_booking_statistics(user):
+    """Get booking statistics for a user."""
+    total_bookings = Booking.objects.filter(user=user).count()
+    successful_bookings = Booking.objects.filter(user=user, booking_status='BOOKED').count()
+    failed_bookings = Booking.objects.filter(user=user, booking_status='FAILED').count()
+    
+    return {
+        'total_bookings': total_bookings,
+        'successful_bookings': successful_bookings,
+        'failed_bookings': failed_bookings,
+        'success_rate': (successful_bookings / total_bookings * 100) if total_bookings > 0 else 0
+    }
+
+def check_train_availability(from_station, to_station, travel_date, class_type):
+    """
+    Check if trains are available for the given route and date.
+    Returns available trains with their schedules.
+    """
+    day_of_week = travel_date.weekday()
+    day_codes = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    day_code = day_codes[day_of_week]
+    
+    trains = Train.objects.filter(is_active=True)
+    available_trains = []
+    for train in trains:
+        if not train.classes.filter(class_type__iexact=class_type).exists():
+            continue
+        schedules = TrainSchedule.objects.filter(
+            train=train,
+            is_active=True,
+            days_of_week__icontains=day_code
+        )
+        for schedule in schedules:
+            stops = [stop.strip().upper() for stop in schedule.route_template.stops]
+            from_code = from_station.code.upper()
+            to_code = to_station.code.upper()
+            if from_code in stops and to_code in stops:
+                from_index = stops.index(from_code)
+                to_index = stops.index(to_code)
+                if from_index < to_index:
+                    segment_stops_with_time = schedule.stops_with_time[from_index:to_index+1]
+                    available_trains.append({
+                        'train_number': train.train_number,
+                        'train_name': train.name,
+                        'schedule_id': schedule.id,
+                        'departure_date': travel_date,
+                        'departure_time': segment_stops_with_time[0]['departure_time'] if segment_stops_with_time else schedule.start_time,
+                        'class_type': class_type,
+                        'route_stops': stops,
+                        'from_station': from_station.name,
+                        'to_station': to_station.name,
+                        'stops_with_time': segment_stops_with_time
+                    })
+    return available_trains
+
+def get_next_available_trains(from_station, to_station, class_type, limit=5):
+    """
+    Get the next available trains for the given route.
+    Returns trains sorted by departure time.
+    """
+    today = timezone.now().date()
+    available_trains = []
+    for day_offset in range(7):  # Check next 7 days
+        check_date = today + timezone.timedelta(days=day_offset)
+        trains = check_train_availability(from_station, to_station, check_date, class_type)
+        for train_info in trains:
+            available_trains.append(train_info)
+    available_trains.sort(key=lambda x: (x['departure_date'], x['departure_time']))
+    return available_trains[:limit]
+
+def validate_booking_request(from_station, to_station, class_type):
+    """
+    Validate if a booking request is possible.
+    Returns (is_valid, error_message, available_trains)
+    """
+    if not from_station or not to_station:
+        return False, "Source and destination stations are required.", []
+    if from_station == to_station:
+        return False, "Source and destination stations must be different.", []
+    valid_classes = ['GENERAL', 'FC']
+    if class_type.upper() not in valid_classes:
+        return False, f"Invalid class type. Must be one of: {', '.join(valid_classes)}", []
+    available_trains = get_next_available_trains(from_station, to_station, class_type)
+    if not available_trains:
+        return False, "No trains found between the given stations.", []
+    return True, "Booking request is valid.", available_trains 

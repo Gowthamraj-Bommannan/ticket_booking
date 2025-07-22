@@ -1,85 +1,42 @@
 from django.db import models
-from django.utils import timezone
+from stations.models import Station
 
-# Create your models here.
+class RouteEdge(models.Model):
+    from_station = models.ForeignKey(Station, on_delete=models.CASCADE, related_name='edges_from')
+    to_station = models.ForeignKey(Station, on_delete=models.CASCADE, related_name='edges_to')
+    distance = models.PositiveIntegerField()
+    is_bidirectional = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        unique_together = ('from_station', 'to_station', 'is_active')
+        db_table = 'route_graph'
+
+    def __str__(self):
+        return f"{self.from_station} to {self.to_station} ({self.distance} km)"
+    
 class RouteTemplate(models.Model):
-    """Template for reusable route paths"""
-    name = models.CharField(max_length=200, unique=True)
-    description = models.TextField(blank=True)
-    source_station = models.ForeignKey('stations.Station', 
-                                       on_delete=models.CASCADE, 
-                                       related_name='route_templates_source')
-    destination_station = models.ForeignKey('stations.Station', 
-                                            on_delete=models.CASCADE, 
-                                            related_name='route_templates_destination')
-    total_distance = models.FloatField(help_text="Total distance in km")
-    estimated_duration = models.IntegerField(help_text="Estimated duration in minutes")
+    CATEGORY_CHOICES = [
+        ('local', 'local'),
+        ('fast', 'fast')
+    ]
+
+    name = models.CharField(max_length=100)
+    from_station = models.ForeignKey(Station, related_name='template_starts',
+                                     on_delete=models.CASCADE)
+    to_station = models.ForeignKey(Station, related_name='template_ends',
+                                   on_delete=models.CASCADE)
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES)
+    stops = models.JSONField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    def __str__(self):
-        return f"{self.name} ({self.source_station.code} - {self.destination_station.code})"
+    update_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = 'Route Template'
-        verbose_name_plural = 'Route Templates'
-        ordering = ['name']
-
-class RouteTemplateStop(models.Model):
-    """Predefined stops for route templates"""
-    route_template = models.ForeignKey(RouteTemplate, on_delete=models
-                                       .CASCADE, related_name='template_stops')
-    station = models.ForeignKey('stations.Station', on_delete=models
-                                .CASCADE, related_name='template_stops')
-    sequence = models.PositiveIntegerField(
-        help_text="Order of stops in the template")
-    distance_from_source = models.FloatField(
-                            help_text="Distance from source station in km")
-    estimated_halt_minutes = models.PositiveIntegerField(
-                            default=2, help_text="Estimated halt duration")
+        unique_together = ['from_station', 'to_station', 'category']
+        db_table = 'templates'
 
     def __str__(self):
-        return f"{self.route_template.name} - {self.station.name} (Seq: {self.sequence})"
-
-    class Meta:
-        verbose_name = 'Route Template Stop'
-        verbose_name_plural = 'Route Template Stops'
-        unique_together = ('route_template', 'sequence')
-        ordering = ['route_template', 'sequence']
-
-class TrainRouteStop(models.Model):
-    """
-    Represents a train stopping at a station
-    """
-    train = models.ForeignKey('trains.Train', on_delete=models.CASCADE,
-                              related_name='route_stops')
-    station = models.ForeignKey('stations.Station', on_delete=models
-                                .CASCADE, related_name='train_stops')
-    sequence = models.PositiveIntegerField(help_text="Order of stops (1, 2, 3...)")
-    # Scheduled times
-    scheduled_arrival_time = models.TimeField(null=True,blank=True,
-                                              help_text="Scheduled arrival time (null for source station)")
-    scheduled_departure_time = models.TimeField(null=True, blank=True, 
-                                                help_text="Scheduled departure time (null for destination station)")
-    # Actual times (to be updated by station master)
-    actual_arrival_time = models.TimeField(null=True, blank=True, 
-                                           help_text="Actual arrival time (null for source station)")
-    actual_departure_time = models.TimeField(null=True, blank=True, 
-                                             help_text="Actual departure time (null for destination station)")
-    halt_minutes = models.PositiveIntegerField(default=0, 
-                                               help_text="Halt duration in minutes")
-    distance_from_source = models.FloatField(help_text="Distance from source station in km")
-    day_count = models.PositiveIntegerField(default=1,
-                                            help_text="Day count (1 for same day, 2 for next day, etc.)")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    def __str__(self):
-        return f"{self.train.name} - {self.station.name} (Seq: {self.sequence})"
-
-    class Meta:
-        verbose_name = 'Train Route Stop'
-        verbose_name_plural = 'Train Route Stops'
-        unique_together = ('train', 'sequence')
-        ordering = ['train', 'sequence']
+        return f"{self.name} {self.from_station} {self.to_station} {self.category}"

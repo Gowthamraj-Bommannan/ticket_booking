@@ -1,420 +1,200 @@
-from django.shortcuts import render
+import logging
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import action
 from django.shortcuts import get_object_or_404
-from django.db.models import Q, Count
 from django.utils import timezone
-from datetime import datetime, timedelta
-from .models import Booking, Passenger
-from .serializers import (
-    BookingSerializer, BookingCreateSerializer, PassengerSerializer,
-    TrainSearchSerializer, SeatAvailabilitySerializer
-)
-from trains.models import Train, TrainClass
+from .models import Booking
+from .serializers import BookingSerializer
 from stations.models import Station
-from routes.models import TrainRouteStop
-import random, string
-from bookingsystem.services import release_seats_and_promote
-from decimal import Decimal
+from exceptions.handlers import (StationNotFoundException,
+                                 FromAndToMustBeDifferent, NewToStationRequired,
+                                 OnlyBookedTicketsExchanged, FromAndToStationsRequired,
+                                 BookingUnauthorizedException)
+from .services import (
+    generate_unique_ticket_number, 
+    calculate_fare, 
+    get_next_available_trains
+)
+from datetime import timedelta
+
+logger = logging.getLogger('bookingsystem')
+
+class IsRegularUser(IsAuthenticated):
+    def has_permission(self, request, view):
+        is_authenticated = super().has_permission(request, view)
+        if view.action == 'create':
+            return is_authenticated and not (request.user.is_staff or request.user.is_superuser)
+        return is_authenticated
 
 class BookingViewSet(viewsets.ModelViewSet):
     queryset = Booking.objects.all()
     serializer_class = BookingSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsRegularUser]
 
     def get_queryset(self):
-        """Filter bookings for current user"""
-        return Booking.objects.filter(user=self.request.user)
-
-    def get_serializer_class(self):
-        if self.action == 'create':
-            return BookingCreateSerializer
-        return BookingSerializer
-
-    def perform_create(self, serializer):
-        """Create booking with automatic seat allocation"""
-        booking = serializer.save()
-        self._allocate_seats(booking)
-        return booking
-
-    def _allocate_seats(self, booking):
-        """Allocate seats to passengers based on availability"""
-        passengers = booking.passengers.all()
-        available_seats = self._get_available_seats_for_booking(booking)
-        
-        if available_seats >= len(passengers):
-            # All passengers confirmed
-            for i, passenger in enumerate(passengers):
-                passenger.seat_number = f"{booking.class_type[0]}{i+1:03d}"
-                passenger.booking_status = 'CONFIRMED'
-                passenger.save()
-            booking.booking_status = 'CONFIRMED'
-        else:
-            # Partial allocation - RAC/WL
-            for i, passenger in enumerate(passengers):
-                if i < available_seats:
-                    passenger.seat_number = f"{booking.class_type}-{i+1:03d}"
-                    passenger.booking_status = 'RAC'
-                else:
-                    passenger.seat_number = None
-                    passenger.booking_status = 'WL'
-                passenger.save()
-            booking.booking_status = 'RAC' if available_seats > 0 else 'WL'
-        booking.save()
-
-    def _get_available_seats_for_booking(self, booking):
-        """Get available seats for specific booking"""
-        try:
-            train_class = TrainClass.objects.get(
-                train=booking.train, 
-                class_type=booking.class_type
-            )
-            total_seats = train_class.seat_capacity
-            
-            booked_seats = Booking.objects.filter(
-                train=booking.train,
-                travel_date=booking.travel_date,
-                class_type=booking.class_type,
-                booking_status__in=['CONFIRMED', 'RAC']
-            ).exclude(id=booking.id).aggregate(
-                total=Count('passengers')
-            )['total'] or 0
-            
-            return max(0, total_seats - booked_seats)
-        except TrainClass.DoesNotExist:
-            return 0
-
-    @action(detail=True, methods=['post'])
-    def cancel(self, request, pk=None):
-        """Cancel a booking and update seat availability"""
-        booking = self.get_object()
-        
-        if booking.booking_status == 'CANCELLED':
-            return Response(
-                {'detail': 'Booking is already cancelled.'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Update booking status
-        booking.booking_status = 'CANCELLED'
-        booking.save()
-        
-        # Update all passengers' status to CANCELLED and clear seat_number
-        for passenger in booking.passengers.all():
-            passenger.booking_status = 'CANCELLED'
-            passenger.seat_number = None
-            passenger.save()
-        
-        # Release seats and auto-promote RAC/WL
-        release_seats_and_promote(booking)
-        
-        return Response({
-            'detail': 'Cancelled successfully, refund will be transferred to you within 4-5 working days.'
-        }, status=status.HTTP_200_OK)
-
-    @action(detail=True, methods=['post'], url_path='transfer-passengers')
-    def transfer_passengers(self, request, pk=None):
-        """
-        Transfer one or more passengers in a booking to new people (update name, age, gender only).
-        Only the booking owner can do this. Berth, seat, and status remain unchanged.
-        Passengers are identified by their current name.
-        """
-        booking = self.get_object()
-        transfers = request.data.get('transfers', [])
-        updated_names = []
-        for transfer in transfers:
-            current_name = transfer.get('current_name')
-            new_name = transfer.get('new_name')
-            new_age = transfer.get('new_age')
-            new_gender = transfer.get('new_gender')
-            try:
-                passenger = booking.passengers.filter(name=current_name).first()
-            except Passenger.DoesNotExist:
-                continue  # Skip if not found
-            if not passenger:
-                continue  # Skip if not found
-            if new_name:
-                passenger.name = new_name
-            if new_age:
-                passenger.age = new_age
-            if new_gender:
-                passenger.gender = new_gender
-            passenger.save()
-            updated_names.append(current_name)
-        # Serialize updated booking
-        serializer = BookingSerializer(booking)
-        return Response({
-            'detail': 'Ticket transferred successfully. Please provide your identity proof during travel.',
-            'booking': serializer.data
-        }, status=status.HTTP_200_OK)
-
-    def _calculate_refund(self, booking):
-        """Calculate refund amount based on cancellation time"""
-        travel_date = booking.travel_date
-        current_date = timezone.now().date()
-        days_before = (travel_date - current_date).days
-        
-        if days_before >= 7:
-            refund_percentage = 0.90  # 90% refund
-        elif days_before >= 3:
-            refund_percentage = 0.75  # 75% refund
-        elif days_before >= 1:
-            refund_percentage = 0.50  # 50% refund
-        else:
-            refund_percentage = 0.00  # No refund
-        
-        return booking.total_fare * refund_percentage
-
-    @action(detail=False, methods=['get'])
-    def history(self, request):
-        """Get booking history for current user"""
-        bookings = self.get_queryset().order_by('-created_at')
-        serializer = self.get_serializer(bookings, many=True)
-        return Response(serializer.data)
+        """Return only the user's bookings, sorted by newest first"""
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return Booking.objects.all().order_by('-created_at')
+        return Booking.objects.filter(user=self.request.user).order_by('-created_at')
     
     def create(self, request, *args, **kwargs):
+        if request.user.is_staff or request.user.is_superuser:
+            logger.warning(f"Admin/staff user {request.user} attempted to create a booking.")
+            return Response({'detail': 'Admins and staff cannot create bookings.'}, status=status.HTTP_403_FORBIDDEN)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
-        # Extract validated data
         validated_data = serializer.validated_data
-        passengers_data = validated_data.pop('passengers')
-        train = Train.objects.get(id=validated_data.pop('train_id'))
-        source_station = Station.objects.get(code=validated_data.pop('source_station_code'))
-        destination_station = Station.objects.get(code=validated_data.pop('destination_station_code'))
+
+        from_code = validated_data['from_station_code'].strip().upper()
+        to_code = validated_data['to_station_code'].strip().upper()
+        from_station = Station.objects.get(code__iexact=from_code)
+        to_station = Station.objects.get(code__iexact=to_code)
         
         # Calculate total fare
-        total_fare = self._calculate_total_fare(
-            train, source_station, destination_station,
-            validated_data['class_type'], validated_data['quota'],
-            len(passengers_data)
-        )
-        
-        # Create booking with business logic moved from serializer
+        total_fare = calculate_fare(validated_data['class_type'], validated_data['num_of_passenegers'])
+        ticket_number = generate_unique_ticket_number()
+
+        booking_time = timezone.now()
+        expiry_time = booking_time + timedelta(hours=1)
         booking = Booking.objects.create(
             user=request.user,
-            train=train,
-            source_station=source_station,
-            destination_station=destination_station,
-            total_fare=total_fare,
-            booking_status='PENDING',
-            travel_date=validated_data['travel_date'],
+            from_station=from_station,
+            to_station=to_station,
             class_type=validated_data['class_type'],
-            quota=validated_data['quota']
+            num_of_passenegers=validated_data['num_of_passenegers'],
+            total_fare=total_fare,
+            travel_date=timezone.now().date(),
+            ticket_number=ticket_number,
+            booking_status='PENDING',
+            booking_time=booking_time,
+            expiry_time=expiry_time
         )
-        
-        # Create passengers
-        for passenger_data in passengers_data:
-            Passenger.objects.create(booking=booking, **passenger_data)
-        
-        payment_session_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
+
+        logger.info(f"Booking created: user={request.user}, from={from_code}, to={to_code}, class={validated_data['class_type']}, num={validated_data['num_of_passenegers']}, ticket={ticket_number}")
+
+        response_serializer = self.get_serializer(booking)
         return Response({
-            "booking_id": booking.id,
-            "payment_session_id": payment_session_id,
-            "total_fare": float(total_fare)
+            'message': 'Booking initiated successfully! Please complete the payment.',
+            'booking_id': booking.id,
+            'ticket_number': ticket_number,
+            'total_fare': float(total_fare),
+            'booking_details': response_serializer.data
         }, status=status.HTTP_201_CREATED)
     
-    def _calculate_total_fare(self, train, source_station, destination_station, class_type, quota, passenger_count):
-        """Calculate total fare for the booking"""
-        # Get distance between stations
-        source_stop = TrainRouteStop.objects.filter(train=train, station=source_station).order_by('sequence').first()
-        dest_stop = TrainRouteStop.objects.filter(train=train, station=destination_station).order_by('sequence').first()
-        distance = Decimal(str(dest_stop.distance_from_source - source_stop.distance_from_source)) if source_stop and dest_stop else Decimal('0')
+    @action(detail=False, methods=['get'], url_path='check-availability')
+    def check_availability(self, request):
+        """Check available trains for a route"""
+        from_station_code = request.query_params.get('from_station')
+        to_station_code = request.query_params.get('to_station')
+        class_type = request.query_params.get('class_type', 'GENERAL')
         
-        # Base fare rates per km (simplified)
-        fare_rates = {
-            'General': Decimal('1.50'),
-            'Sleeper': Decimal('2.00'),
-            'AC': Decimal('4.00'),
-        }
+        if not from_station_code or not to_station_code:
+            raise FromAndToStationsRequired()
         
-        base_rate = fare_rates.get(class_type, Decimal('2.00'))
-        base_fare = distance * base_rate
-        
-        # Add quota adjustments
-        quota_multipliers = {
-            'General': Decimal('1.00'),
-            'Ladies': Decimal('0.75'),
-            'Senior_Citizen': Decimal('0.50'),
-            'Tatkal': Decimal('1.50'),
-        }
-        quota_multiplier = quota_multipliers.get(quota, Decimal('1.00'))
-        
-        # Ensure all operands are Decimal
-        total_fare = base_fare * quota_multiplier * Decimal(passenger_count)
-        return total_fare
-
-class TrainSearchViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
-
-    def list(self, request):
-        """Search for trains between stations"""
-        serializer = TrainSearchSerializer(data=request.query_params)
-        serializer.is_valid(raise_exception=True)
-        
-        search_params = self._extract_search_params(serializer.validated_data)
-        trains = self._find_running_trains(search_params['travel_date'])
-        available_trains = self._filter_available_trains(trains, search_params)
-        
-        return Response(available_trains)
-    
-    def _extract_search_params(self, validated_data):
-        """Extract search parameters from validated data"""
-        return {
-            'source_code': validated_data['source_station'],
-            'dest_code': validated_data['destination_station'],
-            'travel_date': validated_data['travel_date'],
-            'class_type': validated_data.get('class_type', ''),
-            'quota': validated_data.get('quota', '')
-        }
-    
-    def _find_running_trains(self, travel_date):
-        """Find trains running on the specified date"""
-        day_of_week = travel_date.weekday()
-        day_codes = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-        day_code = day_codes[day_of_week]
-        
-        return Train.objects.filter(running_days__contains=[day_code])
-    
-    def _filter_available_trains(self, trains, search_params):
-        """Filter trains with available seats"""
-        available_trains = []
-        
-        for train in trains:
-            if self._has_valid_route(train, search_params['source_code'], search_params['dest_code']):
-                availability = self._get_seat_availability(
-                    train, search_params['source_code'], search_params['dest_code'], 
-                    search_params['travel_date'], search_params['class_type'], search_params['quota']
-                )
-                if availability['available_seats'] > 0:
-                    available_trains.append(self._format_train_info(train, search_params, availability))
-        
-        return available_trains
-    
-    def _format_train_info(self, train, search_params, availability):
-        """Format train information for response"""
-        return {
-            'train_id': train.id,
-            'train_number': train.train_number,
-            'train_name': train.name,
-            'train_type': train.train_type,
-            'source_station': search_params['source_code'],
-            'destination_station': search_params['dest_code'],
-            'travel_date': search_params['travel_date'],
-            'available_seats': availability['available_seats'],
-            'class_types': availability['class_types']
-        }
-
-    def _has_valid_route(self, train, source_code, dest_code):
-        """Check if train has valid route between stations"""
-        source_stop = TrainRouteStop.objects.filter(
-            train=train, 
-            station__code=source_code
-        ).first()
-        dest_stop = TrainRouteStop.objects.filter(
-            train=train, 
-            station__code=dest_code
-        ).first()
-        
-        return source_stop and dest_stop and source_stop.sequence < dest_stop.sequence
-
-    def _get_seat_availability(self, train, source_code, dest_code, travel_date, class_type, quota):
-        """Get seat availability for train"""
         try:
-            if class_type:
-                train_classes = TrainClass.objects.filter(train=train, class_type=class_type)
-            else:
-                train_classes = TrainClass.objects.filter(train=train)
-            
-            availability = {
-                'available_seats': 0,
-                'class_types': {}
-            }
-            
-            for tc in train_classes:
-                total_seats = tc.seat_capacity
-                booked_seats = Booking.objects.filter(
-                    train=train,
-                    travel_date=travel_date,
-                    class_type=tc.class_type,
-                    booking_status__in=['CONFIRMED', 'RAC']
-                ).aggregate(total=Count('passengers'))['total'] or 0
-                
-                available = max(0, total_seats - booked_seats)
-                availability['class_types'][tc.class_type] = available
-                availability['available_seats'] += available
-            
-            return availability
-        except Exception:
-            return {'available_seats': 0, 'class_types': {}}
+            from_station = Station.objects.get(code__iexact=from_station_code)
+            to_station = Station.objects.get(code__iexact=to_station_code)
+        except Station.DoesNotExist:
+            raise StationNotFoundException()
+        
+        # Get available trains
+        available_trains = get_next_available_trains(from_station, to_station, class_type)
+        
+        return Response({
+            'from_station': from_station.name,
+            'to_station': to_station.name,
+            'class_type': class_type,
+            'available_trains': available_trains,
+            'total_available': len(available_trains)
+        })
 
-class SeatAvailabilityViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
+    def list(self, request, *args, **kwargs):
+        """List all bookings for the current user"""
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        
+        # Add summary information
+        total_bookings = queryset.count()
+        pending_bookings = queryset.filter(booking_status='PENDING').count()
+        booked_tickets = queryset.filter(booking_status='BOOKED').count()
+        failed_bookings = queryset.filter(booking_status='FAILED').count()
+        
+        return Response({
+            'total_bookings': total_bookings,
+            'pending_bookings': pending_bookings,
+            'booked_tickets': booked_tickets,
+            'failed_bookings': failed_bookings,
+            'bookings': serializer.data
+        })
 
-    def list(self, request):
-        """Get detailed seat availability for a specific train"""
-        serializer = SeatAvailabilitySerializer(data=request.query_params)
-        serializer.is_valid(raise_exception=True)
-        
-        train_id = serializer.validated_data['train_id']
-        source_code = serializer.validated_data['source_station']
-        dest_code = serializer.validated_data['destination_station']
-        travel_date = serializer.validated_data['travel_date']
-        class_type = serializer.validated_data['class_type']
-        quota = serializer.validated_data['quota']
-        
-        train = get_object_or_404(Train, id=train_id)
-        
-        # Get detailed availability
-        availability = self._get_detailed_availability(
-            train, source_code, dest_code, travel_date, class_type, quota
-        )
-        
-        return Response(availability)
+    def retrieve(self, request, *args, **kwargs):
+        """Only allow users to retrieve their own bookings"""
+        booking = self.get_object()
+        if booking.user != request.user and not (request.user.is_staff or request.user.is_superuser):
+            logger.warning(f"User {request.user} attempted to access booking {booking.id} belonging to {booking.user}")
+            raise BookingUnauthorizedException()
+        serializer = self.get_serializer(booking)
+        return Response(serializer.data)
 
-    def _get_detailed_availability(self, train, source_code, dest_code, travel_date, class_type, quota):
-        """Get detailed seat availability breakdown"""
+    def update(self, request, *args, **kwargs):
+        return Response({'detail': 'Ticket update is not allowed.'},
+                        status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    @action(detail=True, methods=['post'], url_path='exchange')
+    def exchange_ticket(self, request, pk=None):
+        """Exchange ticket - change destination station only"""
+        booking = self.get_object()
+        
+        # Only allow exchange for BOOKED tickets
+        if booking.booking_status != 'BOOKED':
+            raise OnlyBookedTicketsExchanged()
+        
+        # Get new destination station
+        new_to_station_code = request.data.get('to_station_code')
+        if not new_to_station_code:
+            raise NewToStationRequired()
+        
         try:
-            train_class = TrainClass.objects.get(train=train, class_type=class_type)
-            total_seats = train_class.seat_capacity
-            
-            # Get booked seats
-            booked_seats = Booking.objects.filter(
-                train=train,
-                travel_date=travel_date,
-                class_type=class_type,
-                booking_status__in=['CONFIRMED', 'RAC']
-            ).aggregate(total=Count('passengers'))['total'] or 0
-            
-            available_seats = max(0, total_seats - booked_seats)
-            
-            # Get waitlist count
-            waitlist_count = Booking.objects.filter(
-                train=train,
-                travel_date=travel_date,
-                class_type=class_type,
-                booking_status='WL'
-            ).aggregate(total=Count('passengers'))['total'] or 0
-            
-            return {
-                'train_id': train.id,
-                'train_number': train.train_number,
-                'train_name': train.name,
-                'source_station': source_code,
-                'destination_station': dest_code,
-                'travel_date': travel_date,
-                'class_type': class_type,
-                'quota': quota,
-                'total_seats': total_seats,
-                'booked_seats': booked_seats,
-                'available_seats': available_seats,
-                'waitlist_count': waitlist_count,
-                'status': 'Available' if available_seats > 0 else 'Waitlist'
-            }
-        except TrainClass.DoesNotExist:
-            return {
-                'error': 'Train class not found',
-                'status': 'Not Available'
-            }
+            new_to_station = Station.objects.get(code__iexact=new_to_station_code.strip())
+        except Station.DoesNotExist:
+            raise StationNotFoundException()
+        
+        # Validate that new destination is different from current
+        if booking.to_station == new_to_station:
+            raise FromAndToMustBeDifferent()
+        
+        # Validate that new destination is different from source
+        if booking.from_station == new_to_station:
+            raise FromAndToMustBeDifferent()
+        
+        # Update the destination station
+        old_destination = booking.to_station.name
+        booking.to_station = new_to_station
+        booking.save()
+        
+        logger.info(f"Ticket exchange: user={request.user}, booking_id={booking.id}, old_to={old_destination}, new_to={new_to_station.name}")
+
+        return Response({
+            'message': f'Ticket exchanged successfully! Destination changed from {old_destination} to {new_to_station.name}',
+            'ticket_number': booking.ticket_number,
+            'old_destination': old_destination,
+            'new_destination': new_to_station.name,
+            'booking_details': self.get_serializer(booking).data
+        }, status=status.HTTP_200_OK)
+
+    def destroy(self, request, *args, **kwargs):
+        """Disable destroy method - no cancellation for local train tickets"""
+        return Response({
+            'error': 'Cancellation is not allowed for local train tickets. Use ticket exchange if needed.'
+        }, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def get_object(self):
+        """Get booking object with user-specific access"""
+        queryset = self.get_queryset()
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
+        obj = get_object_or_404(queryset, **filter_kwargs)
+        self.check_object_permissions(self.request, obj)
+        return obj

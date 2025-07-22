@@ -1,9 +1,13 @@
 import logging
-logger = logging.getLogger("trains")
 from rest_framework import serializers
-from .models import Train, TrainClass
-from routes.serializers import TrainRouteStopSerializer
-from exceptions.handlers import TrainAlreadyExistsException
+from .models import Train, TrainClass, TrainSchedule
+from utils.constants import TrainMessage
+from exceptions.handlers import ScheduleAlreadyExists
+from utils.constants import TrainMessage
+from exceptions.handlers import (TrainAlreadyExistsException,
+                                 ScheduleAlreadyExists)
+
+logger = logging.getLogger("trains")
 
 class TrainClassSerializer(serializers.ModelSerializer):
     """
@@ -11,112 +15,60 @@ class TrainClassSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = TrainClass
-        fields = ['id', 'class_type', 'seat_capacity']
-
-    def to_representation(self, instance):
-        logger.debug(f"Serializing train class: {instance.class_type} (Capacity: {instance.seat_capacity})")
-        return super().to_representation(instance)
-
-    def validate_seat_capacity(self, value):
-        """
-        Validates that seat capacity is a positive integer.
-        """
-        logger.debug(f"Validating seat capacity: {value}")
-        if value <= 0:
-            logger.error(f"Invalid seat capacity: {value}")
-            raise serializers.ValidationError("Seat capacity must be a positive integer.")
-        return value
+        fields = ['id', 'class_type']
 
 class TrainSerializer(serializers.ModelSerializer):
     """
-    Serializes train data, including classes and route, for API responses.
+    Serializes train data, including classes for API responses.
     """
     classes = TrainClassSerializer(many=True, read_only=True)
-    route = serializers.SerializerMethodField()
     
     class Meta:
         model = Train
-        fields = ['id', 'train_number', 'name', 'train_type', 'running_days', 'classes', 'route', 'is_active', 'created_at', 'updated_at']
-        read_only_fields = ['created_at', 'updated_at']
-
-    def to_representation(self, instance):
-        logger.debug(f"Serializing train: {instance.name} ({instance.train_number})")
-        return super().to_representation(instance)
-
-    def get_route(self, obj):
-        """
-        Returns the serialized route stops for the train.
-        """
-        logger.debug(f"Getting route for train: {obj.name} ({obj.train_number})")
-        stops = obj.route_stops.order_by('sequence')
-        return TrainRouteStopSerializer(stops, many=True).data
+        fields = ['id', 'train_number', 'name', 'train_type', 'classes']
+        read_only_fields = ['id', 'train_number']
 
 class TrainCreateUpdateSerializer(serializers.ModelSerializer):
     """
     Serializes and validates train creation and update requests.
     """
-    classes = TrainClassSerializer(many=True)
+    classes = TrainClassSerializer(many=True, required=True)
     train_number = serializers.CharField(required=False, read_only=True)
     
     class Meta:
         model = Train
-        fields = ['train_number', 'name', 'train_type', 'running_days', 'classes']
+        fields = ['train_number', 'name', 'train_type', 'classes']
 
-    def validate_name(self, value):
+    def validate_train_number(self, value):
         """
-        Validates that the train name is unique among active trains.
+        Validates that the train number is unique among all trains if provided.
         """
-        logger.debug(f"Validating train name: {value}")
-        # Check for case-insensitive uniqueness among active trains
-        # During update, exclude the current instance
-        queryset = Train.objects.filter(name__iexact=value)
+        queryset = Train.all_objects.filter(train_number=value)
         if self.instance:
             queryset = queryset.exclude(pk=self.instance.pk)
-        
         if queryset.exists():
-            logger.error(f"Train name already exists: {value}")
+            logger.error(f"Train number already exists: {value}")
             raise TrainAlreadyExistsException()
-        return value
-
-    def validate_running_days(self, value):
-        """
-        Validates that running days are provided and valid.
-        """
-        logger.debug(f"Validating running days: {value}")
-        if not value:
-            logger.error("No running days specified.")
-            raise serializers.ValidationError("At least one running day must be specified.")
-        
-        # Validate that all days are valid choices
-        valid_days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-        for day in value:
-            if day not in valid_days:
-                logger.error(f"Invalid running day: {day}")
-                raise serializers.ValidationError(f"Invalid running day: {day}. Must be one of {valid_days}")
-        
         return value
 
     def validate_classes(self, value):
         """
         Validates that classes are provided, unique, and valid.
         """
-        logger.debug(f"Validating train classes: {value}")
         if not value:
             logger.error("No classes specified.")
-            raise serializers.ValidationError("At least one class must be specified.")
+            raise serializers.ValidationError(TrainMessage.TRAIN_CLASSES_MUST_DEFINED)
         
-        # Check for duplicate class types
         class_types = [item['class_type'] for item in value]
         if len(class_types) != len(set(class_types)):
             logger.error("Duplicate class types found.")
-            raise serializers.ValidationError("Duplicate class types are not allowed.")
+            raise serializers.ValidationError(TrainMessage.TRAIN_DUPLICATE_CLASS)
         
-        # Validate class types are valid
-        valid_class_types = ['General', 'Sleeper', 'AC']
+        valid_class_types = [choice[0] for choice in TrainClass.CLASS_TYPE_CHOICES]
         for class_data in value:
             if class_data['class_type'] not in valid_class_types:
                 logger.error(f"Invalid class type: {class_data['class_type']}")
-                raise serializers.ValidationError(f"Invalid class type: {class_data['class_type']}. Must be one of {valid_class_types}")
+                raise serializers.ValidationError(TrainMessage.TRAIN_CLASS_INVALID)
         
         return value
 
@@ -124,6 +76,31 @@ class TrainCreateUpdateSerializer(serializers.ModelSerializer):
         """
         Performs additional cross-field validation for train creation/update.
         """
-        logger.debug(f"Cross-field validation for train: {data}")
-        # Additional cross-field validation if needed
         return data 
+    
+class TrainScheduleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TrainSchedule
+        fields = [
+            'id', 'train', 'route_template', 'days_of_week', 'start_time',
+            'direction', 'is_active', 'stops_with_time'
+        ]
+        read_only_fields = ['id', 'stops_with_time']
+
+    def validate(self, data):
+        train = data.get('train')
+        direction = data.get('direction')
+        start_time = data.get('start_time')
+        # Only check if all required fields are present
+        if train and direction and start_time:
+            qs = TrainSchedule.objects.filter(
+                train=train,
+                start_time=start_time,
+                direction=direction,
+                is_active=True
+            )
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise ScheduleAlreadyExists(TrainMessage.SCHEDULE_ALREADY_EXISTS)
+        return data

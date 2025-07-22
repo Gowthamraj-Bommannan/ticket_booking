@@ -57,3 +57,7 @@ venv.bak/
 ehthumbs.db
 Thumbs.db 
 README.md
+# Ignore all Django migration files
+*/migrations/
+*/migrations/*.py
+*/migrations/*.pyc

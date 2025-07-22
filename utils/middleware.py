@@ -66,7 +66,6 @@ class RequestResponseLoggingMiddleware(MiddlewareMixin):
             masked_data = self._mask_json_data(data)
             return json.dumps(masked_data)
         except json.JSONDecodeError:
-            # If not JSON, mask common patterns
             return self._mask_text_data(data_str)
     
     def _mask_json_data(self, data):

@@ -9,9 +9,10 @@ from .models import Station
 from accounts.models import User
 from .serializers import StationSerializer, AssignStationMasterSerializer
 from exceptions.handlers import (
-    StationNotFoundException, StationAlreadyInactiveException, 
-    StationAlreadyActiveException, StationInactiveException
+    StationNotFoundException, StationAlreadyExistsException,
+    UnauthorizedAccessException, NotFound, StationMasterExistsException
 )
+from utils.constants import UserMessage
 import logging
 
 logger = logging.getLogger("stations")
@@ -88,26 +89,15 @@ class StationViewSet(viewsets.ModelViewSet):
         """
         logger.info(f"Attempting to get station with code: {self.kwargs.get('code')}")
         try:
-            station = super().get_object()
+            station = Station.all_objects.get(code=self.kwargs['code'])
             logger.info(f"Successfully retrieved station: {station.name} ({station.code})")
             return station
-        except Http404:
+        except Station.DoesNotExist:
             logger.warning(f"Station with code {self.kwargs.get('code')} not found.")
-            # Check if station exists but is inactive
-            code = self.kwargs.get('code')
-            if code:
-                inactive_station = Station.all_objects.filter(code=code, is_active=False).first()
-                if inactive_station:
-                    logger.warning(f"Station {inactive_station.name} ({inactive_station.code}) is inactive.")
-                    raise StationInactiveException()
-            logger.error(f"Station with code {code} not found and is not inactive.")
             raise StationNotFoundException()
 
     @action(detail=True, methods=['post'], url_path='assign-master')
     def assign_master(self, request, code=None):
-        """
-        Assigns a user as the station master for a station.
-        """
         logger.info(f"Attempting to assign master for station with code: {code}")
         station = self.get_object()
         serializer = AssignStationMasterSerializer(data=request.data)
@@ -115,60 +105,70 @@ class StationViewSet(viewsets.ModelViewSet):
         user_id = serializer.validated_data['user_id']
         user = get_object_or_404(User, id=user_id)
         logger.info(f"Attempting to validate user for assignment: {user.username} (ID: {user.id})")
-        # Validation: is_active first, then role, is_staff, not already assigned
         if not user.is_active:
             logger.warning(f"User {user.username} (ID: {user.id}) is not active. Cannot assign as station master.")
-            return Response({'detail': 'User must be active (is_active=True).'}, status=400)
+            raise NotFound(UserMessage.USER_NOT_FOUND)
         if user.role != 'station_master':
-            logger.warning(f"User {user.username} (ID: {user.id}) does not have role=station_master. Cannot assign as station master.")
-            return Response({'detail': 'User must have role=station_master.'}, status=400)
+            logger.warning(f"User {user.username} (ID: {user.id}) does not have role=station_master")
+            raise UnauthorizedAccessException()
         if hasattr(user, 'station') and user.station is not None and user.station != station:
-            logger.warning(f"User {user.username} (ID: {user.id}) is already assigned as station master to station {user.station.name} ({user.station.code}). Cannot re-assign.")
-            return Response({'detail': 'User is already assigned as station master to another station.'}, status=400)
+            logger.warning(f"User {user.username} (ID: {user.id}) is already assigned as station master to station {user.station.name} ({user.station.code}).")
+            raise StationMasterExistsException()
         if station.station_master and station.station_master != user:
-            logger.warning(f"Station {station.name} ({station.code}) already has a different station master ({station.station_master.username}). Cannot re-assign.")
-            return Response({'detail': 'Station already has a different station master.'}, status=400)
+            logger.warning(f"Station {station.name} ({station.code}) already has a different station master ({station.station_master.username}).")
+            raise StationMasterExistsException()
         station.station_master = user
         station.save()
         logger.info(f"Successfully assigned station master for station {station.name} ({station.code}) to user {user.username} (ID: {user.id}).")
         return Response({'detail': 'Station master assigned successfully.'})
 
-    @action(detail=True, methods=['delete'], url_path='remove')
-    def deactivate(self, request, code=None):
-        """
-        Soft deletes a station by setting is_active=False.
-        """
-        logger.info(f"Attempting to deactivate station with code: {code}")
-        station = get_object_or_404(Station.all_objects, code=code)
-        
+    def destroy(self, request, *args, **kwargs):
+        code = kwargs.get('code')
+        logger.info(f"Attempting to soft delete (deactivate) station with code: {code}")
+        station = self.get_object()
         if not station.is_active:
-            logger.warning(f"Station {station.name} ({station.code}) is already inactive. Cannot re-deactivate.")
-            raise StationAlreadyInactiveException()
-        
+            logger.warning(f"Station {station.name} ({station.code}) is already inactive.")
+            raise StationNotFoundException()
+
+        # Handle route edge merging for non-junction stations
+        from routes.models import RouteEdge
+        incoming_edges = RouteEdge.objects.filter(to_station=station, is_active=True)
+        outgoing_edges = RouteEdge.objects.filter(from_station=station, is_active=True)
+        if incoming_edges.count() == 1 and outgoing_edges.count() == 1:
+            in_edge = incoming_edges.first()
+            out_edge = outgoing_edges.first()
+            # Deactivate both edges
+            in_edge.is_active = False
+            in_edge.save()
+            out_edge.is_active = False
+            out_edge.save()
+            logger.info(f"Deactivated edges: {in_edge} and {out_edge} due to station removal.")
+            # Create new edge bypassing the removed station
+            RouteEdge.objects.create(
+                from_station=in_edge.from_station,
+                to_station=out_edge.to_station,
+                distance=in_edge.distance + out_edge.distance,
+                is_bidirectional=in_edge.is_bidirectional and out_edge.is_bidirectional,
+                is_active=True
+            )
+            logger.info(f"Created new edge from {in_edge.from_station} to {out_edge.to_station} with distance {in_edge.distance + out_edge.distance}.")
+        else:
+            logger.info(f"Station {station.name} ({station.code}) is a junction or not a simple pass-through; no edge merging performed.")
+
         station.is_active = False
         station.save()
         logger.info(f"Successfully deactivated station {station.name} ({station.code}).")
-        
-        return Response({
-            'detail': f'Station {station.name} ({station.code}) has been deactivated.'
-        }, status=status.HTTP_200_OK)
-    
-    @action(detail=True, methods=['post'], url_path='activate')
-    def activate(self, request, code=None):
-        """
-        Reactivates a station by setting is_active=True.
-        """
-        logger.info(f"Attempting to activate station with code: {code}")
-        station = get_object_or_404(Station.all_objects, code=code)
-        
-        if station.is_active:
-            logger.warning(f"Station {station.name} ({station.code}) is already active. Cannot re-activate.")
-            raise StationAlreadyActiveException()
-        
-        station.is_active = True
-        station.save()
-        logger.info(f"Successfully activated station {station.name} ({station.code}).")
-        
-        return Response({
-            'detail': f'Station {station.name} ({station.code}) has been activated.'
-        }, status=status.HTTP_200_OK)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def create(self, request, *args, **kwargs):
+        logger.info(f"Attempting to create station with data: {request.data}")
+        code = request.data.get('code')
+        name = request.data.get('name')
+        # Check for any existing station with the same code or name
+        if Station.all_objects.filter(code=code).exists():
+            logger.warning(f"Station with code {code} already exists.")
+            raise StationAlreadyExistsException()
+        if Station.all_objects.filter(name=name).exists():
+            logger.warning(f"Station with name {name} already exists.")
+            raise StationAlreadyExistsException()
+        return super().create(request, *args, **kwargs)

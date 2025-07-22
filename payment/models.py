@@ -3,18 +3,15 @@ from bookingsystem.models import Booking
 
 class PaymentTransaction(models.Model):
     STATUS_CHOICES = [
-        ('INITIATED', 'INITIATED'),
         ('SUCCESS', 'SUCCESS'),
         ('FAILED', 'FAILED'),
     ]
     METHOD_CHOICES = [
-        ('CARD', 'Card'),
         ('UPI', 'UPI'),
-        ('NETBANKING', 'Netbanking'),
         ('WALLET', 'Wallet'),
     ]
     booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='payments')
-    payment_gateway_id = models.CharField(max_length=100)
+    transaction_id = models.CharField(max_length=100)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES)
     payment_method = models.CharField(max_length=20, choices=METHOD_CHOICES)
