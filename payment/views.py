@@ -9,20 +9,22 @@ from bookingsystem.models import Booking
 from exceptions.handlers import (
     PaymentAlreadySuccessException,
     PaymentUnauthorizedException,
-    PaymentFailedException, 
+    PaymentFailedException,
     PermissionDeniedException,
-    PaymentNotFoundException
+    PaymentNotFoundException,
 )
 import logging
 import uuid
 
 logger = logging.getLogger("payment")
 
+
 class PaymentTransactionViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing payment transactions.
     Supports CRUD operations and payment processing.
     """
+
     queryset = PaymentTransaction.objects.all()
     serializer_class = PaymentTransactionSerializer
     permission_classes = [IsAuthenticated]
@@ -46,24 +48,32 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
         self._check_existing_payment(booking)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        amount = serializer.validated_data.get('amount')
+        amount = serializer.validated_data.get("amount")
         self._validate_amount(amount, booking, booking.id)
         transaction_id = self._get_or_generate_transaction_id(serializer)
-        payment = serializer.save(booking=booking, paid_at=timezone.now(), transaction_id=transaction_id)
-        booking.booking_status = 'BOOKED' if payment.status == 'SUCCESS' else 'FAILED'
+        payment = serializer.save(
+            booking=booking, paid_at=timezone.now(), transaction_id=transaction_id
+        )
+        booking.booking_status = "BOOKED" if payment.status == "SUCCESS" else "FAILED"
         booking.save()
-        logger.info(f"Payment {payment.status} for booking {booking.id} by user {user}")
+        logger.info(
+            f"Payment {payment.status} for booking ticket - {booking.id} by user {user}"
+        )
         headers = self.get_success_headers(serializer.data)
-        return Response({
-            'payment': PaymentTransactionSerializer(payment).data,
-            'booking_status': booking.booking_status
-        }, status=status.HTTP_201_CREATED, headers=headers)
+        return Response(
+            {
+                "payment": PaymentTransactionSerializer(payment).data,
+                "booking_status": booking.booking_status,
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
 
     def _validate_user(self, user):
         """
         Raises exception if user is staff or superuser.
         """
-        if getattr(user, 'is_staff', False) or getattr(user, 'is_superuser', False):
+        if getattr(user, "is_staff", False) or getattr(user, "is_superuser", False):
             logger.warning(f"Admin/staff {user} attempted to make a payment.")
             raise PaymentUnauthorizedException()
 
@@ -72,9 +82,9 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
         Retrieves and validates the booking for the user.
         Raises exception if not found or not pending.
         """
-        booking_id = request.data.get('booking')
+        booking_id = request.data.get("booking")
         booking = get_object_or_404(Booking, id=booking_id, user=user)
-        if getattr(booking, 'booking_status', None) != 'PENDING':
+        if getattr(booking, "booking_status", None) != "PENDING":
             logger.warning(f"Booking {booking_id} not found for payment.")
             raise PaymentNotFoundException()
         return booking
@@ -83,7 +93,9 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
         """
         Raises exception if a successful payment already exists for the booking.
         """
-        if PaymentTransaction.objects.filter(booking=booking, status='SUCCESS').exists():
+        if PaymentTransaction.objects.filter(
+            booking=booking, status="SUCCESS"
+        ).exists():
             logger.warning(f"Payment already completed for booking {booking.id}")
             raise PaymentAlreadySuccessException()
 
@@ -91,15 +103,17 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
         """
         Validates that the payment amount matches the booking fare.
         """
-        if float(amount) != float(getattr(booking, 'total_fare', 0)):
-            logger.warning(f"Payment amount does not match booking fare for booking {booking_id}")
+        if float(amount) != float(getattr(booking, "total_fare", 0)):
+            logger.warning(
+                f"Payment amount does not match booking fare for booking {booking_id}"
+            )
             raise PaymentFailedException()
 
     def _get_or_generate_transaction_id(self, serializer):
         """
         Returns transaction_id from serializer or generates a new one.
         """
-        transaction_id = serializer.validated_data.get('transaction_id')
+        transaction_id = serializer.validated_data.get("transaction_id")
         if not transaction_id:
             transaction_id = str(uuid.uuid4())
         return transaction_id
@@ -123,4 +137,4 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
         Deletes a payment transaction.
         Removes payment record from database.
         """
-        raise PermissionDeniedException() 
+        raise PermissionDeniedException()

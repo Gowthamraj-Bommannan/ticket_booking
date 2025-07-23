@@ -8,12 +8,19 @@ class UserMessage:
     USER_INACTIVE = "User account is disabled."
     USERNAME_AND_PASSWORD_REQUIRED = "Both username and password are required."
     USER_LOGIN_SUCCESSFUL = "Login in successful."
-    OTP_SENT_REGISTRATION = "OTP sent to mobile/email. Please provide OTP to complete registration."
-    OTP_SENT_STAFF_REGISTRATION = "OTP sent to mobile/email. Please provide OTP to complete staff registration."
-    STAFF_REGISTRATION_WAITING = "Staff registration successful. Waiting for admin approval."
+    OTP_SENT_REGISTRATION = (
+        "OTP sent to mobile/email. Please provide OTP to complete registration."
+    )
+    OTP_SENT_STAFF_REGISTRATION = (
+        "OTP sent to mobile/email. Please provide OTP to complete staff registration."
+    )
+    STAFF_REGISTRATION_WAITING = (
+        "Staff registration successful. Waiting for admin approval."
+    )
     INVALID_OTP = "Invalid OTP."
     PASSWORD_CHANGED_SUCCESS = "Password changed successfully."
     USER_NOT_AUTHORIZED = "Only users can view their tickets."
+
 
 # ---------- FIELD VALIDATION ----------
 class FieldValidationMessage:
@@ -26,8 +33,9 @@ class FieldValidationMessage:
     PASSWORD_REQUIRED = "Password is required."
     PASSWORD_TOO_SHORT = "Password must be at least 8 characters long."
     PASSWORD_TOO_LONG = "Password must not exceed 16 characters."
-    PASSWORD_LONG_OR_SHORT = 'Password must be 8 to 16 characters long.'
+    PASSWORD_LONG_OR_SHORT = "Password must be 8 to 16 characters long."
     FIRST_NAME_REQUIRED = "First name is required."
+
 
 # ---------- UNIQUE FIELD CONFLICTS ----------
 class AlreadyExistsMessage:
@@ -35,10 +43,12 @@ class AlreadyExistsMessage:
     USERNAME_ALREADY_EXISTS = "Username already exists."
     MOBILE_ALREADY_EXISTS = "Mobile number already exists."
 
+
 class GeneralMessage:
     INVALID_INPUT = "Invalid input."
-    QUERY_MISSING = 'Search query parameter is required.'
+    QUERY_MISSING = "Search query parameter is required."
     PERMISSION_DENIED = "You do not have permission to perform this action."
+
 
 # ---------STATION CONSTANTS-----------
 class StationMessage:
@@ -53,15 +63,20 @@ class StationMessage:
     STATION_DELETED_SUCCESSFULLY = "Station deleted successfully."
     STATION_UPDATED = "Station Updated Successfully."
     STATION_WITH_CODE_NOT_EXISTS = "Station with code '{station_code}' does not exist."
-    STATION_WITH_ID_NOT_EXISTS = "Station with ID {station_id} does not exist or is inactive."
+    STATION_WITH_ID_NOT_EXISTS = (
+        "Station with ID {station_id} does not exist or is inactive."
+    )
     STATION_ALREADY_INACTIVE = "Station is already inactive."
     STATION_ALREADY_ACTIVE = "Station is already active."
-    STATION_DEACTIVATED = "Station {station_name} ({station_code}) has been deactivated."
+    STATION_DEACTIVATED = (
+        "Station {station_name} ({station_code}) has been deactivated."
+    )
     STATION_ACTIVATED = "Station {station_name} ({station_code}) has been activated."
     STATION_INACTIVE_CANNOT_ACCESS = "Station is inactive and cannot be accessed."
     STATION_INACTIVE_FOR_ROUTE = "Cannot create route with inactive station."
     STATION_INACTIVE_FOR_BOOKING = "Cannot create booking with inactive station."
     STATION_MASTER_EXISTS = "Station master already exist for this station."
+
 
 # ------------TRAIN CONSTANTS-------------
 class TrainMessage:
@@ -75,7 +90,7 @@ class TrainMessage:
     TRAIN_COMPARTMENT_COUNT_INVALID = "Compartment count must be a positive integer."
     TRAIN_SEAT_COUNT_INVALID = "Seats per compartment must be a positive integer."
     TRAIN_WITH_NUMBER_NOT_EXIST = "Train with number '{train_number}' does not exist."
-    TRAIN_QUERY_MISSING = 'train_number query parameter is required.'
+    TRAIN_QUERY_MISSING = "train_number query parameter is required."
     TRAIN_ALREADY_INACTIVE = "Train is already inactive."
     TRAIN_ALREADY_ACTIVE = "Train is already active."
     TRAIN_DEACTIVATED = "Train {train_name} ({train_number}) has been deactivated."
@@ -89,10 +104,15 @@ class TrainMessage:
     TRAIN_CLASS_INVALID = "Invalid class type: {class_data['class_type']}. Must be one of {valid_class_types}"
     TRAIN_SCHEDULE_REQUIRED = "Train Scheduled is required."
     TRAIN_SCHEDULE_NOT_FOUND = "Train schedule not found."
-    SCHEDULE_DIRECTION_NOT_BE_SAME = "Train direction should be sequential. (Up and down)"
-    SCHEDULE_ALREADY_EXISTS = "Train already has a schedule with same start time and diretion."
+    SCHEDULE_DIRECTION_NOT_BE_SAME = (
+        "Train direction should be sequential. (Up and down)"
+    )
+    SCHEDULE_ALREADY_EXISTS = (
+        "Train already has a schedule with same start time and diretion."
+    )
     TRAIN_SCHEDULE_MUST_BE_DIFFERENT = "Train's new schedule must start from the station where the previous journey ended."
     TRAIN_SCHEDULE_OVERLAPS = "This train already has a schedule that overlaps with the requested time window."
+
 
 # ----------- ROUTE/STOP CONSTANTS -------------
 class RouteMessage:
@@ -108,6 +128,7 @@ class RouteMessage:
     ROUTE_NOT_FOUND_BETWEEN = "No route found"
     ROUTE_ALREADY_EXISTS_IN_SAME_TIME = "Route already exists in this timings."
 
+
 # ----------- PAYMENT CONSTANTS -------------
 class PaymentMessage:
     PAYMENT_FAILED = "Payment failed. Please try again."
@@ -121,6 +142,7 @@ class PaymentMessage:
     PAYMENT_UNAUTHORIZED = "You are not authorized to perform this payment."
     PAYMENT_SESSION_EXPIRED = "Payment session has expired. Please start again."
 
+
 class BookingMessage:
     FROM_AND_TO_MUST_BE_DIFFERENT = "From and To station codes must be different."
     ATLEAST_ONE_PASSENGER_REQUIRED = "At least one passenger is required."
@@ -129,4 +151,3 @@ class BookingMessage:
     BOOKED_TICKETS_CAN_BE_EXCHANGED = "Only booked tickets can be exchanged."
     FROM_AND_TO_ARE_REQUIRED = "Both from and to stations are required."
     FORBIDDEN = "You do not have the permission for this."
-    

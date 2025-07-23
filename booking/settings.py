@@ -110,7 +110,7 @@ LOGGING = {
             'level': 'DEBUG',
             'propagate': False,
         },
-        'booking_debug': {
+        'bookingsystem': {
             'handlers': ['file', 'console'],
             'level': 'DEBUG',
             'propagate': False,

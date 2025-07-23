@@ -2,25 +2,27 @@ from django.db import models
 from routes.models import RouteTemplate
 import random
 
+
 class ActiveManager(models.Manager):
     """Manager that returns only active records"""
+
     def get_queryset(self):
         return super().get_queryset().filter(is_active=True)
+
 
 class Train(models.Model):
     """
     Represents a train with its number, name, type, running days, and status.
     Supports soft delete via is_active.
     """
-    TRAIN_TYPE_CHOICES = [
-        ('Local', 'local'),
-        ('Fast', 'fast'),
-        ('AC', 'ac')
-    ]
+
+    TRAIN_TYPE_CHOICES = [("Local", "local"), ("Fast", "fast"), ("AC", "ac")]
     train_number = models.CharField(max_length=10, unique=True, blank=True)
     name = models.CharField(max_length=200)
     train_type = models.CharField(max_length=20, choices=TRAIN_TYPE_CHOICES)
-    is_active = models.BooleanField(default=True, help_text="Indicates if the train is active or soft deleted")
+    is_active = models.BooleanField(
+        default=True, help_text="Indicates if the train is active or soft deleted"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -46,7 +48,7 @@ class Train(models.Model):
         # Auto-generate train number if not provided
         if not self.train_number:
             self.train_number = self.generate_train_number()
-        
+
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -57,10 +59,11 @@ class Train(models.Model):
         return f"{self.name} ({self.train_number}){status}"
 
     class Meta:
-        db_table = 'trains'
-        verbose_name = 'Train'
-        verbose_name_plural = 'Trains'
-        ordering = ['train_number']
+        db_table = "trains"
+        verbose_name = "Train"
+        verbose_name_plural = "Trains"
+        ordering = ["train_number"]
+
 
 class TrainSchedule(models.Model):
     """
@@ -68,21 +71,24 @@ class TrainSchedule(models.Model):
     start time, stops with time, direction, and status.
     Supports soft delete via is_active.
     """
-    train = models.ForeignKey(Train, on_delete=models.CASCADE, related_name='schedules')
+
+    train = models.ForeignKey(Train, on_delete=models.CASCADE, related_name="schedules")
     route_template = models.ForeignKey(RouteTemplate, on_delete=models.CASCADE)
     days_of_week = models.CharField(max_length=20)
     start_time = models.TimeField()
     stops_with_time = models.JSONField(default=list, blank=True)
-    direction = models.CharField(max_length=10, choices=[('up', 'Up'), ('down', 'Down')])
+    direction = models.CharField(
+        max_length=10, choices=[("up", "Up"), ("down", "Down")]
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'train_schedules'
-        verbose_name = 'Train Schedule'
-        verbose_name_plural = 'Train Schedules'
-        ordering = ['train', 'start_time']
+        db_table = "train_schedules"
+        verbose_name = "Train Schedule"
+        verbose_name_plural = "Train Schedules"
+        ordering = ["train", "start_time"]
 
     def __str__(self):
         return f"{self.train} on {self.route_template} at {self.start_time}"
