@@ -89,6 +89,7 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         instance.is_active = False
         instance.save()
+        logger.info(f"route removed successfully by {request.user.username}.")
         return Response(status=status.HTTP_204_NO_CONTENT)
     
     @action(detail=False, methods=['post'], url_path='add-between')
@@ -113,6 +114,7 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
             )
         new_edge = self._create_new_edge(from_station, to_station, distance, is_bidirectional)
         serializer = RouteEdgeSerializer(new_edge)
+        logger.info(f"New stop added successfully by {request.user.username}.")
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     
     def _check_admin_permission(self, user):

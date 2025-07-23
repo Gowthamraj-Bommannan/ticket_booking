@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timedelta
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.permissions import BasePermission
@@ -8,6 +9,7 @@ from stations.models import Station
 from routes.models import RouteEdge
 from utils.constants import RouteMessage
 from django.http import Http404
+import heapq
 from .models import Train, TrainSchedule
 from .serializers import (TrainSerializer, TrainCreateUpdateSerializer,
                           TrainScheduleSerializer)
@@ -17,7 +19,6 @@ from exceptions.handlers import (
                         InvalidInput, NotFound, RouteStopsNotFoundException,
                         ScheduleAlreadyExists, ScheduleNotFoundException
 )
-import heapq
 
 logger = logging.getLogger("trains")
 
@@ -244,14 +245,11 @@ class TrainScheduleViewSet(viewsets.ModelViewSet):
                 raise ScheduleAlreadyExists(
                     TrainMessage.SCHEDULE_DIRECTION_NOT_BE_SAME
                     )
-            # New validation: ensure the new trip starts where the last one ended
             if prev_last_station_code != new_first_station_code:
                 logger.error("Train's new schedule does not start from the previous journey's end station.")
                 raise ScheduleAlreadyExists(TrainMessage.
                                             TRAIN_SCHEDULE_MUST_BE_DIFFERENT
                                             )
-        # --- End Direction Alternation Validation ---
-
         schedule = TrainSchedule.objects.create(
             train=validated_data['train'],
             route_template=route_template,
