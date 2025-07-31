@@ -132,7 +132,7 @@ class RouteTemplateSerializer(serializers.ModelSerializer):
         if RouteTemplate.objects.filter(
             from_station=from_station, to_station=to_station, category=category
         ).exists():
-            logger.error(f"A route template for this station and category exists.")
+            logger.error(f"Route template for this station and category exists.")
             raise RouteAlreadyExistsException()
 
         if category.lower() == "fast":

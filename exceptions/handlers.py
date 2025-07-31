@@ -26,7 +26,8 @@ def custom_exception_handler(exc, context):
     # Handle Django's DoesNotExist as 404
     if isinstance(exc, ObjectDoesNotExist):
         return Response(
-            {"success": False, "error": "Not found."}, status=status.HTTP_404_NOT_FOUND
+            {"success": False, "error": "Not found."},
+            status=status.HTTP_404_NOT_FOUND
         )
 
     # Handle Django and DRF validation errors as 400
@@ -65,51 +66,20 @@ def custom_exception_handler(exc, context):
         status=status.HTTP_500_INTERNAL_SERVER_ERROR,
     )
 
-
-class EmailAlreadyExists(APIException):
+class AlreadyExistsException(APIException):
     status_code = status.HTTP_409_CONFLICT
-    default_detail = AlreadyExistsMessage.EMAIL_ALREADY_EXISTS
-    default_code = "email_exists"
+    default_code = "already_exists"
 
 
-class DuplicateEmailException(APIException):
-    status_code = status.HTTP_409_CONFLICT
-    default_detail = AlreadyExistsMessage.EMAIL_ALREADY_EXISTS
-    default_code = "duplicate_email"
-
-
-class UsernameAlreadyExists(APIException):
-    status_code = status.HTTP_409_CONFLICT
-    default_detail = AlreadyExistsMessage.USERNAME_ALREADY_EXISTS
-    default_code = "username_exists"
-
-
-class MobileNumberAlreadyExists(APIException):
-    status_code = status.HTTP_409_CONFLICT
-    default_detail = AlreadyExistsMessage.MOBILE_ALREADY_EXISTS
-    default_code = "mobile_number_exists"
-
-
-class InvalidCredentials(APIException):
-    status_code = status.HTTP_401_UNAUTHORIZED
-    default_detail = UserMessage.INVALID_CREDENTIALS
-    default_code = "invalid_credentials"
-
-    def __init__(self, detail=None, code=None):
-        if detail is None:
-            detail = self.default_detail
-        super().__init__(detail, code)
+class NotFoundException(APIException):
+    status_code = status.HTTP_404_NOT_FOUND
+    default_detail = "not_found"
 
 
 class InvalidCredentialsException(APIException):
     status_code = status.HTTP_401_UNAUTHORIZED
     default_detail = UserMessage.INVALID_CREDENTIALS
     default_code = "invalid_credentials_exception"
-
-    def __init__(self, detail=None, code=None):
-        if detail is None:
-            detail = self.default_detail
-        super().__init__(detail, code)
 
 
 class InvalidOTPException(APIException):
@@ -124,37 +94,10 @@ class UnauthorizedAccessException(APIException):
     default_code = "unauthorized_access"
 
 
-class UserNotFoundException(APIException):
-    status_code = status.HTTP_404_NOT_FOUND
-    default_detail = UserMessage.USER_NOT_FOUND
-    default_code = "user_not_found"
-
-
-class AlreadyExists(APIException):
-    status_code = status.HTTP_409_CONFLICT
-    default_code = "already_exists"
-
-
-class InvalidInput(APIException):
+class InvalidInputException(APIException):
     status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = GeneralMessage.INVALID_INPUT
     default_code = "invalid_input"
-
-    def __init__(self, detail=None, code=None):
-        if detail is None:
-            detail = "Invalid input provided."
-        super().__init__(detail, code)
-
-
-class QueryParameterMissing(APIException):
-    status_code = status.HTTP_400_BAD_REQUEST
-    default_detail = GeneralMessage.QUERY_MISSING
-    default_code = "missing_query"
-
-
-class NotFound(APIException):
-    status_code = status.HTTP_404_NOT_FOUND
-    default_detail = "not_found"
-
 
 # ---------- TRAIN EXCEPTIONS ----------
 class TrainNotFoundException(APIException):

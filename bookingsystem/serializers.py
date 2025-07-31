@@ -2,7 +2,9 @@ from rest_framework import serializers
 from .models import Booking
 from stations.models import Station
 from .services import validate_booking_request
-from exceptions.handlers import FromAndToMustBeDifferent, StationNotFoundException
+from exceptions.handlers import (
+    FromAndToMustBeDifferent, StationNotFoundException
+    )
 from utils.constants import BookingMessage
 
 
@@ -14,8 +16,10 @@ class BookingSerializer(serializers.ModelSerializer):
 
     from_station_code = serializers.CharField(write_only=True)
     to_station_code = serializers.CharField(write_only=True)
-    from_station = serializers.CharField(source="from_station.code", read_only=True)
-    to_station = serializers.CharField(source="to_station.code", read_only=True)
+    from_station = serializers.CharField(source="from_station.code",
+                                         read_only=True)
+    to_station = serializers.CharField(source="to_station.code",
+                                       read_only=True)
 
     class Meta:
         model = Booking

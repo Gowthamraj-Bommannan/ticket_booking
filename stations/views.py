@@ -12,16 +12,13 @@ from exceptions.handlers import (
     StationNotFoundException,
     StationAlreadyExistsException,
     UnauthorizedAccessException,
-    NotFound,
     StationMasterExistsException,
 )
+from routes.models import RouteEdge
 from utils.constants import UserMessage
 import logging
 
 logger = logging.getLogger("stations")
-
-__all__ = ["StationViewSet", "IsAdminUser", "IsAdminOrStationMaster"]
-
 
 class IsAdminUser(BasePermission):
     """
@@ -78,7 +75,8 @@ class StationViewSet(viewsets.ModelViewSet):
         else:
             permission_classes = [IsAuthenticated]
         logger.info(
-            f"Permission classes for action {self.action}: {[p.__name__ for p in permission_classes]}"
+            f"Permission classes for action {self.action}: "
+            f"{[p.__name__ for p in permission_classes]}"
         )
         return [permission() for permission in permission_classes]
 
@@ -174,8 +172,6 @@ class StationViewSet(viewsets.ModelViewSet):
             )
             raise StationNotFoundException()
 
-        # Handle route edge merging for non-junction stations
-        from routes.models import RouteEdge
 
         incoming_edges = RouteEdge.objects.filter(to_station=station, is_active=True)
         outgoing_edges = RouteEdge.objects.filter(from_station=station, is_active=True)
@@ -195,21 +191,24 @@ class StationViewSet(viewsets.ModelViewSet):
                 from_station=in_edge.from_station,
                 to_station=out_edge.to_station,
                 distance=in_edge.distance + out_edge.distance,
-                is_bidirectional=in_edge.is_bidirectional and out_edge.is_bidirectional,
+                is_bidirectional=in_edge.is_bidirectional and out_edge.
+                is_bidirectional,
                 is_active=True,
             )
             logger.info(
-                f"Created new edge from {in_edge.from_station} to {out_edge.to_station} with distance {in_edge.distance + out_edge.distance}."
+                f"Created new edge from {in_edge.from_station} to "
+                f"{out_edge.to_station} with distance"
+                f"{in_edge.distance + out_edge.distance}."
             )
         else:
             logger.info(
-                f"Station {station.name} ({station.code}) is a junction or not a simple pass-through; no edge merging performed."
+                f"Station {station.name} ({station.code}) is a junction or not a simple pass-through."
             )
 
         station.is_active = False
         station.save()
         logger.info(
-            f"Successfully deactivated station {station.name} ({station.code})."
+            f"{station.name} ({station.code}) station deleted successfully."
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
 

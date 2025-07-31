@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import BasePermission
 from datetime import datetime, timedelta
 from rest_framework.decorators import action
+from datetime import datetime
 from stations.models import Station
 from routes.models import RouteEdge
 from utils.constants import RouteMessage
@@ -20,8 +21,8 @@ from utils.constants import TrainMessage
 from exceptions.handlers import (
     TrainNotFoundException,
     TrainAlreadyExistsException,
-    InvalidInput,
-    NotFound,
+    InvalidInputException,
+    NotFoundException,
     RouteStopsNotFoundException,
     ScheduleAlreadyExists,
     ScheduleNotFoundException,
@@ -152,151 +153,29 @@ class TrainScheduleViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         """
         Create a new schedule for a train with validations.
-        Calculates stops, distances, timings, and checks for overlaps.
-        Handles fast/local routes and bidirectional paths.
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
-
-        try:
-            route_template = validated_data["route_template"]
-        except KeyError:
-            logger.error("Route template not provided.")
-            raise InvalidInput(TrainMessage.TRAIN_SCHEDULE_REQUIRED)
-        except NotFound:
-            logger.error("Train schedule not found.")
-            raise NotFound(TrainMessage.TRAIN_SCHEDULE_NOT_FOUND)
-
-        stops_codes = [code.strip().upper() for code in route_template.stops]
-        if not stops_codes or len(stops_codes) < 2:
-            logger.error("Route template does not have enough stops.")
-            raise RouteStopsNotFoundException()
-
-        stations = []
-        for code in stops_codes:
-            station = Station.objects.filter(code__iexact=code).first()
-            if not station:
-                logger.error(f"Station with code {code} not found.")
-                raise RouteStopsNotFoundException(
-                    f"Station with code {code} not found."
-                )
-            stations.append(station)
-
-        # Determine if this is a fast train
-        train = validated_data["train"]
-        is_fast = (
-            hasattr(route_template, "category")
-            and getattr(route_template, "category", "").lower() == "fast"
-        )
-        distances = []
-        if is_fast:
-            # For each consecutive pair, find shortest path and sum distances
-            for stop in range(len(stops_codes) - 1):
-                code_a = stops_codes[stop]
-                code_b = stops_codes[stop + 1]
-                path, total_distance = self._find_shortest_path(code_a, code_b)
-                if path is None:
-                    logger.error(
-                        f"No route found between {code_a} to {code_b} (fast train pathfinding)"
-                    )
-                    raise RouteStopsNotFoundException(
-                        RouteMessage.ROUTE_NOT_FOUND_BETWEEN
-                    )
-                distances.append(total_distance)
-        else:
-            # Local: require direct edge
-            from django.db.models import Q
-
-            for stop in range(len(stops_codes) - 1):
-                code_a = stops_codes[stop]
-                code_b = stops_codes[stop + 1]
-                edge = RouteEdge.objects.filter(
-                    (
-                        Q(
-                            from_station__code__iexact=code_a,
-                            to_station__code__iexact=code_b,
-                        )
-                        | Q(
-                            from_station__code__iexact=code_b,
-                            to_station__code__iexact=code_a,
-                            is_bidirectional=True,
-                        )
-                    ),
-                    is_active=True,
-                ).first()
-                if not edge:
-                    logger.error(f"No route found between {code_a} to {code_b}")
-                    raise RouteStopsNotFoundException(
-                        RouteMessage.ROUTE_NOT_FOUND_BETWEEN
-                    )
-                distances.append(edge.distance)
-
+        
+        # Process route template and validate stops
+        route_template, stations, distances = self._process_route_template(
+            validated_data)
+        
+        # Generate schedule timings
         start_time = validated_data["start_time"]
-        stops_with_time = self._generate_schedule_timings(
-            stations, distances, start_time
-        )
-
-        # --- Overlap Validation with generated times ---
-        from datetime import datetime
-
-        new_start = start_time
-        new_end = datetime.strptime(stops_with_time[-1]["arrival_time"], "%H:%M").time()
-        new_days = set([d.strip() for d in validated_data["days_of_week"].split(",")])
-
-        existing_schedules = TrainSchedule.objects.filter(
-            train=validated_data["train"], is_active=True
-        )
-
-        for sched in existing_schedules:
-            sched_days = set([d.strip() for d in sched.days_of_week.split(",")])
-            if not (new_days & sched_days):
-                continue  # No overlapping days
-
-            sched_start = sched.start_time
-            sched_end = None
-            if sched.stops_with_time and len(sched.stops_with_time) > 0:
-                sched_end = datetime.strptime(
-                    sched.stops_with_time[-1]["arrival_time"], "%H:%M"
-                ).time()
-            else:
-                continue  # skip if no stops
-
-            # Check for overlap regardless of direction
-            if new_start < sched_end and sched_start < new_end:
-                logger.error("Schedule overlap detected for train.")
-                raise ScheduleAlreadyExists(TrainMessage.TRAIN_SCHEDULE_OVERLAPS)
-        # --- End Overlap Validation ---
-
-        # --- Direction Alternation Validation ---
-        # Find the latest schedule that ends before the new start time
-        latest_prior_schedule = None
-        for sched in existing_schedules.order_by("start_time"):
-            if sched.stops_with_time and len(sched.stops_with_time) > 0:
-                sched_end = datetime.strptime(
-                    sched.stops_with_time[-1]["arrival_time"], "%H:%M"
-                ).time()
-                if sched_end <= new_start:
-                    latest_prior_schedule = sched
-        if latest_prior_schedule:
-            prev_direction = latest_prior_schedule.direction
-            new_direction = validated_data["direction"]
-            prev_last_station_code = (
-                latest_prior_schedule.route_template.stops[-1].strip().upper()
-            )
-            new_first_station_code = route_template.stops[0].strip().upper()
-            if prev_direction == new_direction:
-                logger.error(
-                    "Train cannot have two consecutive schedules in the same direction without a return trip."
-                )
-                raise ScheduleAlreadyExists(TrainMessage.SCHEDULE_DIRECTION_NOT_BE_SAME)
-            if prev_last_station_code != new_first_station_code:
-                logger.error(
-                    "Train's new schedule does not start from the previous journey's end station."
-                )
-                raise ScheduleAlreadyExists(
-                    TrainMessage.TRAIN_SCHEDULE_MUST_BE_DIFFERENT
-                )
+        stops_with_time = self._generate_schedule_timings(stations, distances,
+                                                          start_time)
+        
+        # Validate schedule conflicts
+        self._validate_schedule_conflicts(validated_data, stops_with_time,
+                                          exclude_instance=None)
+        
+        # Validate direction alternation
+        self._validate_direction_alternation(validated_data, route_template,
+                                             exclude_instance=None)
+        
+        # Create schedule
         schedule = TrainSchedule.objects.create(
             train=validated_data["train"],
             route_template=route_template,
@@ -306,13 +185,225 @@ class TrainScheduleViewSet(viewsets.ModelViewSet):
             stops_with_time=stops_with_time,
             is_active=validated_data.get("is_active", True),
         )
+        
         logger.info(f"Train schedule added successfully: {schedule.id}")
         response = self.get_serializer(schedule)
         return Response(response.data, status=status.HTTP_201_CREATED)
 
+    def update(self, request, *args, **kwargs):
+        """
+        Updates an existing train schedule with all validations.
+        """
+        instance = self.get_object()
+        partial = kwargs.get("partial", False)
+        serializer = self.get_serializer(instance, data=request.data,
+                                         partial=partial)
+        serializer.is_valid(raise_exception=True)
+        validated_data = serializer.validated_data
+        
+        # Process route template and validate stops
+        route_template, stations, distances = self._process_route_template(
+            validated_data)
+        
+        # Generate schedule timings
+        start_time = validated_data["start_time"]
+        stops_with_time = self._generate_schedule_timings(stations,
+                                                          distances,
+                                                          start_time
+                                                          )
+        # Validate schedule conflicts
+        self._validate_schedule_conflicts(validated_data, stops_with_time,
+                                          exclude_instance=instance)
+        # Validate direction alternation
+        self._validate_direction_alternation(validated_data, route_template,
+                                             exclude_instance=instance)
+        # Update instance
+        self._update_schedule_instance(instance, validated_data,
+                                       route_template, start_time,
+                                       stops_with_time
+                                       )
+        logger.info(f"Train schedule updated successfully: {instance.id}")
+        response = self.get_serializer(instance)
+        return Response(response.data)
+
+    def _process_route_template(self, validated_data):
+        """
+        Process route template and validate stops.
+        Returns (route_template, stations, distances)
+        """
+        try:
+            route_template = validated_data["route_template"]
+        except KeyError:
+            logger.error("Route template not provided.")
+            raise InvalidInputException()
+        except NotFoundException:
+            logger.error("Train schedule not found.")
+            raise NotFoundException(TrainMessage.TRAIN_SCHEDULE_NOT_FOUND)
+
+        stops_codes = [code.strip().upper() for code in route_template.stops]
+        if not stops_codes or len(stops_codes) < 2:
+            logger.error("Route template does not have enough stops.")
+            raise RouteStopsNotFoundException()
+
+        stations = self._validate_and_get_stations(stops_codes)
+        distances = self._calculate_distances(route_template, stops_codes)
+        
+        return route_template, stations, distances
+
+    def _validate_and_get_stations(self, stops_codes):
+        """
+        Validate and get station objects for given stop codes.
+        """
+        stations = []
+        for code in stops_codes:
+            station = Station.objects.filter(code__iexact=code).first()
+            if not station:
+                logger.error(f"Station with code {code} not found.")
+                raise RouteStopsNotFoundException(f"Station with code {code} not found.")
+            stations.append(station)
+        return stations
+
+    def _calculate_distances(self, route_template, stops_codes):
+        """
+        Calculate distances between consecutive stops.
+        """
+        is_fast = (
+            hasattr(route_template, "category")
+            and getattr(route_template, "category", "").lower() == "fast"
+        )
+        
+        distances = []
+        if is_fast:
+            # For each consecutive pair, find shortest path and sum distances
+            for stop in range(len(stops_codes) - 1):
+                code_a = stops_codes[stop]
+                code_b = stops_codes[stop + 1]
+                path, total_distance = self._find_shortest_path(code_a,
+                                                                code_b)
+                if path is None:
+                    logger.error(f"No route found between {code_a} to {code_b} (fast train pathfinding)")
+                    raise RouteStopsNotFoundException(RouteMessage.
+                                                      ROUTE_NOT_FOUND_BETWEEN)
+                distances.append(total_distance)
+        else:
+            # Local: require direct edge
+            from django.db.models import Q
+            for stop in range(len(stops_codes) - 1):
+                code_a = stops_codes[stop]
+                code_b = stops_codes[stop + 1]
+                edge = RouteEdge.objects.filter(
+                    (
+                        Q(from_station__code__iexact=code_a,
+                          to_station__code__iexact=code_b)
+                        | Q(from_station__code__iexact=code_b,
+                            to_station__code__iexact=code_a, 
+                            is_bidirectional=True)
+                    ),
+                    is_active=True,
+                ).first()
+                if not edge:
+                    logger.error(f"No route found between {code_a} to {code_b}")
+                    raise RouteStopsNotFoundException(RouteMessage.
+                                                      ROUTE_NOT_FOUND_BETWEEN)
+                distances.append(edge.distance)
+        
+        return distances
+
+    def _validate_schedule_conflicts(self, validated_data, stops_with_time,
+                                     exclude_instance=None):
+        """
+        Validate schedule conflicts and overlaps.
+        """
+        from datetime import datetime
+        
+        new_start = validated_data["start_time"]
+        new_end = datetime.strptime(stops_with_time[-1]["arrival_time"],
+                                    "%H:%M").time()
+        new_days = set([d.strip() for d in validated_data["days_of_week"]
+                        .split(",")])
+        existing_schedules = TrainSchedule.objects.filter(
+            train=validated_data["train"], is_active=True
+        )
+        
+        if exclude_instance:
+            existing_schedules = existing_schedules.exclude(pk=exclude_instance.pk)
+
+        for sched in existing_schedules:
+            sched_days = set([d.strip() for d in sched.days_of_week.split(",")])
+            if not (new_days & sched_days):
+                continue  # No overlapping days
+            sched_start = sched.start_time
+            sched_end = None
+            if sched.stops_with_time and len(sched.stops_with_time) > 0:
+                sched_end = datetime.strptime(sched.stops_with_time[-1]["arrival_time"],
+                                              "%H:%M").time()
+            else:
+                continue  # skip if no stops
+            # Check for overlap regardless of direction
+            if new_start < sched_end and sched_start < new_end:
+                logger.error("Schedule overlap detected for train.")
+                raise ScheduleAlreadyExists(TrainMessage.TRAIN_SCHEDULE_OVERLAPS)
+
+    def _validate_direction_alternation(self, validated_data, route_template,
+                                        exclude_instance=None):
+        """
+        Validate direction alternation and station continuity.
+        """
+        
+        existing_schedules = TrainSchedule.objects.filter(
+            train=validated_data["train"], is_active=True
+        )
+        
+        if exclude_instance:
+            existing_schedules = existing_schedules.exclude(pk=exclude_instance.pk)
+
+        # Find the latest schedule that ends before the new start time
+        latest_prior_schedule = None
+        for sched in existing_schedules.order_by("start_time"):
+            if sched.stops_with_time and len(sched.stops_with_time) > 0:
+                sched_end = datetime.strptime(
+                    sched.stops_with_time[-1]["arrival_time"], "%H:%M"
+                    ).time()
+                if sched_end <= validated_data["start_time"]:
+                    latest_prior_schedule = sched
+        
+        if latest_prior_schedule:
+            prev_direction = latest_prior_schedule.direction
+            new_direction = validated_data["direction"]
+            prev_last_station_code = latest_prior_schedule.route_template.stops[
+                -1].strip().upper()
+            new_first_station_code = route_template.stops[0].strip().upper()
+            
+            if prev_direction == new_direction:
+                logger.error("Train cannot have two consecutive schedules " +
+                             "in the same direction without a return trip.")
+                raise ScheduleAlreadyExists(TrainMessage.
+                                            SCHEDULE_DIRECTION_NOT_BE_SAME)
+            
+            if prev_last_station_code != new_first_station_code:
+                logger.error("Train's new schedule does not start from the " +
+                             "previous journey's end station.")
+                raise ScheduleAlreadyExists(TrainMessage.
+                                            TRAIN_SCHEDULE_MUST_BE_DIFFERENT)
+
+    def _update_schedule_instance(self, instance, validated_data,
+                                route_template, start_time, stops_with_time):
+        """
+        Update the schedule instance with new data.
+        """
+        instance.route_template = route_template
+        instance.days_of_week = validated_data["days_of_week"]
+        instance.start_time = start_time
+        instance.direction = validated_data["direction"]
+        instance.stops_with_time = stops_with_time
+        instance.is_active = validated_data.get("is_active", 
+                                                instance.is_active)
+        instance.save()
+
     def _find_shortest_path(self, code_a, code_b):
         """
-        Dijkstra's algorithm to find shortest path and total distance between two stations.
+        Dijkstra's algorithm to find shortest path and total distance
+        between two stations.
         Returns (path, total_distance) or (None, None) if no path exists.
         """
         # Build graph
@@ -338,7 +429,8 @@ class TrainScheduleViewSet(viewsets.ModelViewSet):
             visited.add(current)
             for neighbor, weight in graph.get(current, []):
                 if neighbor not in visited:
-                    heapq.heappush(queue, (dist + weight, neighbor, path + [neighbor]))
+                    heapq.heappush(queue, (dist + weight, 
+                                           neighbor, path + [neighbor]))
         return None, None
 
     @staticmethod
@@ -378,147 +470,6 @@ class TrainScheduleViewSet(viewsets.ModelViewSet):
             )
         return result
 
-    def update(self, request, *args, **kwargs):
-        """
-        Updates an existing train schedule with all validations.
-        Ensures no overlaps or invalid directional flows.
-        """
-        instance = self.get_object()
-        partial = kwargs.get("partial", False)
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-        validated_data = serializer.validated_data
-
-        try:
-            route_template = validated_data["route_template"]
-        except KeyError:
-            logger.error("Route template not provided.")
-            raise InvalidInput(TrainMessage.TRAIN_SCHEDULE_REQUIRED)
-        except NotFound:
-            logger.error("Train schedule not found.")
-            raise NotFound(TrainMessage.TRAIN_SCHEDULE_NOT_FOUND)
-
-        stops_codes = [code.strip().upper() for code in route_template.stops]
-        if not stops_codes or len(stops_codes) < 2:
-            logger.error("Route template does not have enough stops.")
-            raise RouteStopsNotFoundException()
-
-        stations = []
-        for code in stops_codes:
-            station = Station.objects.filter(code__iexact=code).first()
-            if not station:
-                logger.error(f"Station with code {code} not found.")
-                raise RouteStopsNotFoundException(
-                    f"Station with code {code} not found."
-                )
-            stations.append(station)
-
-        from django.db.models import Q
-
-        distances = []
-        for stop in range(len(stops_codes) - 1):
-            code_a = stops_codes[stop]
-            code_b = stops_codes[stop + 1]
-            edge = RouteEdge.objects.filter(
-                (
-                    Q(
-                        from_station__code__iexact=code_a,
-                        to_station__code__iexact=code_b,
-                    )
-                    | Q(
-                        from_station__code__iexact=code_b,
-                        to_station__code__iexact=code_a,
-                        is_bidirectional=True,
-                    )
-                ),
-                is_active=True,
-            ).first()
-            if not edge:
-                logger.error(f"No route found between {code_a} to {code_b}")
-                raise RouteStopsNotFoundException(RouteMessage.ROUTE_NOT_FOUND_BETWEEN)
-            distances.append(edge.distance)
-
-        start_time = validated_data["start_time"]
-        stops_with_time = self._generate_schedule_timings(
-            stations, distances, start_time
-        )
-
-        # --- Overlap Validation with generated times ---
-        from datetime import datetime
-
-        new_start = start_time
-        new_end = datetime.strptime(stops_with_time[-1]["arrival_time"], "%H:%M").time()
-        new_days = set([d.strip() for d in validated_data["days_of_week"].split(",")])
-
-        existing_schedules = TrainSchedule.objects.filter(
-            train=validated_data["train"], is_active=True
-        ).exclude(pk=instance.pk)
-
-        for sched in existing_schedules:
-            sched_days = set([d.strip() for d in sched.days_of_week.split(",")])
-            if not (new_days & sched_days):
-                continue  # No overlapping days
-
-            sched_start = sched.start_time
-            sched_end = None
-            if sched.stops_with_time and len(sched.stops_with_time) > 0:
-                sched_end = datetime.strptime(
-                    sched.stops_with_time[-1]["arrival_time"], "%H:%M"
-                ).time()
-            else:
-                continue  # skip if no stops
-
-            # Check for overlap regardless of direction
-            if new_start < sched_end and sched_start < new_end:
-                logger.error("Schedule overlap detected for train.")
-                raise ScheduleAlreadyExists(TrainMessage.TRAIN_SCHEDULE_OVERLAPS)
-        # --- End Overlap Validation ---
-
-        # --- Direction Alternation Validation ---
-        # Find the latest schedule that ends before the new start time
-        latest_prior_schedule = None
-        for sched in existing_schedules.order_by("start_time"):
-            if sched.stops_with_time and len(sched.stops_with_time) > 0:
-                sched_end = datetime.strptime(
-                    sched.stops_with_time[-1]["arrival_time"], "%H:%M"
-                ).time()
-                if sched_end <= new_start:
-                    latest_prior_schedule = sched
-        if latest_prior_schedule:
-            prev_direction = latest_prior_schedule.direction
-            new_direction = validated_data["direction"]
-            prev_last_station_code = (
-                latest_prior_schedule.route_template.stops[-1].strip().upper()
-            )
-            new_first_station_code = route_template.stops[0].strip().upper()
-            if prev_direction == new_direction:
-                logger.error(
-                    "Train cannot have two consecutive schedules in the same direction without a return trip."
-                )
-                raise ScheduleAlreadyExists(TrainMessage.SCHEDULE_DIRECTION_NOT_BE_SAME)
-            # New validation: ensure the new trip starts where the last one ended
-            if prev_last_station_code != new_first_station_code:
-                logger.error(
-                    "Train's new schedule does not start from the previous journey's end station."
-                )
-                raise ScheduleAlreadyExists(
-                    TrainMessage.TRAIN_SCHEDULE_MUST_BE_DIFFERENT
-                )
-        # --- End Direction Alternation Validation ---
-
-        # Update the instance fields
-        instance.route_template = route_template
-        instance.days_of_week = validated_data["days_of_week"]
-        instance.start_time = start_time
-        instance.direction = validated_data["direction"]
-        instance.stops_with_time = stops_with_time
-        instance.is_active = validated_data.get("is_active", instance.is_active)
-        instance.save()
-
-        logger.info(f"Train schedule updated successfully: {instance.id}")
-        response = self.get_serializer(instance)
-        return Response(response.data)
-
     def destroy(self, request, *args, **kwargs):
         """
         Soft deletes a train schedule by marking it inactive.
@@ -536,7 +487,8 @@ class TrainScheduleViewSet(viewsets.ModelViewSet):
             status=status.HTTP_204_NO_CONTENT,
         )
 
-    @action(detail=False, methods=["get"], url_path="by-train/(?P<train_number>[^/]+)")
+    @action(detail=False, methods=["get"], 
+            url_path="by-train/(?P<train_number>[^/]+)")
     def schedule_by_train(self, request, train_number=None):
         """
         Returns all active schedules for a given train number.

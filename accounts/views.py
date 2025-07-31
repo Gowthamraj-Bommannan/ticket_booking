@@ -1,5 +1,5 @@
-from django.shortcuts import render, get_object_or_404
-from rest_framework import generics, status, permissions
+from django.shortcuts import get_object_or_404
+from rest_framework import generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -15,48 +15,28 @@ from .serializers import (
     ChangePasswordSerializer,
     UpdateProfileSerializer,
     StaffRequestSerializer,
-    StaffRequestApprovalSerializer,
 )
-from .permissions import IsAdminUser
 from rest_framework.permissions import IsAuthenticated
-from .models import StaffRequest, Role
+from .models import StaffRequest
 import logging
+from utils.permission_helpers import IsAdminUser
 from bookingsystem.models import Booking
 from bookingsystem.serializers import BookingSerializer
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from exceptions.handlers import (
     InvalidCredentialsException,
-    DuplicateEmailException,
-    MobileNumberAlreadyExists,
-    UsernameAlreadyExists,
-    InvalidInput,
-    InvalidOTPException,
+    AlreadyExistsException,
+    InvalidInputException,
     UnauthorizedAccessException,
-    UserNotFoundException,
+    NotFoundException,
 )
-from utils.constants import UserMessage, AlreadyExistsMessage
+from utils.constants import (UserMessage, GeneralMessage,
+                             AlreadyExistsMessage)
+from utils.registration_helpers import RegistrationFlowHelper
 
 User = get_user_model()
 logger = logging.getLogger("accounts")
-
-
-def send_otp(mobile_number, email):
-    """
-    Sends OTP to the provided mobile number and email address.
-
-    This is a mock implementation that simulates OTP sending functionality.
-    In production, this should integrate with actual SMS/email gateways.
-
-    Args:
-        mobile_number (str): The mobile number to send OTP to
-        email (str): The email address to send OTP to
-
-    Returns:
-        str: The OTP code (always returns '123456' for demo purposes)
-    """
-    # In production, integrate with SMS/email gateway
-    logger.debug(f"OTP sent to mobile: {mobile_number} and email: {email}")
-    return "123456"  # Always returns 123456 for demo
 
 
 class RegisterView(APIView):
@@ -80,93 +60,34 @@ class RegisterView(APIView):
         """
         Processes user registration requests.
 
-        Handles both initial registration (sends OTP) and final registration (verifies OTP).
-        Creates user account with 'user' role upon successful OTP verification.
+        Handles both initial registration (sends OTP) and final
+        registration (verifies OTP).
+        Creates user account with 'user' role upon successful OTP verification
 
         Args:
             request: HTTP request object containing registration data
 
         Returns:
-            Response: Success response with tokens and user data, or OTP sent confirmation
+            Response: Success response with tokens and user data, or
+            OTP sent confirmation
         """
         serializer = RegisterSerializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
-            return self._handle_registration_request(request, serializer)
+            return RegistrationFlowHelper.handle_registration_request(
+                request, serializer, "registration"
+                )
+        
+        except (InvalidInputException, AlreadyExistsException, DRFValidationError) as e:
+            return RegistrationFlowHelper.handle_registration_error(
+                e, serializer, "registration")
+        
         except Exception as e:
-            return self._handle_registration_error(e, serializer)
+            logger.error(f"Unexpected error during registration: {str(e)}", exc_info=True)
+            return RegistrationFlowHelper.handle_registration_error(
+                e, serializer, "registration")
 
-    def _handle_registration_request(self, request, serializer):
-        """Handle the registration request logic"""
-        mobile_number = serializer.validated_data["mobile_number"]
-        email = serializer.validated_data["email"]
-        username = serializer.validated_data["username"]
-        otp = request.data.get("otp")
 
-        if not otp:
-            return self._send_otp_response(mobile_number, email)
-
-        if otp != "123456":
-            logger.warning(
-                f"Invalid OTP provided for registration - Email: {email}, Username: {username}"
-            )
-            raise InvalidOTPException()
-
-        return self._complete_registration(serializer)
-
-    def _send_otp_response(self, mobile_number, email):
-        """Send OTP and return response"""
-        send_otp(mobile_number, email)
-        logger.info(
-            f"OTP sent for registration - Email: {email}, Mobile: {mobile_number}"
-        )
-        return Response(
-            {"detail": UserMessage.OTP_SENT_REGISTRATION, "otp": "123456"}, status=202
-        )
-
-    def _complete_registration(self, serializer):
-        """Complete the registration process"""
-        # Create user with business logic moved from serializer
-        validated_data = serializer.validated_data
-        user = User.objects.create_user(
-            username=validated_data["username"],
-            email=validated_data["email"],
-            mobile_number=validated_data["mobile_number"],
-            password=validated_data["password"],
-            first_name=validated_data.get("first_name", ""),
-            last_name=validated_data.get("last_name", ""),
-            role="user",  # Always set role to user for regular registration
-        )
-        logger.info(
-            f"User created successfully - Username: {user.username}, Email: {user.email}"
-        )
-
-        refresh = RefreshToken.for_user(user)
-        data = {
-            "refresh": str(refresh),
-            "access": str(refresh.access_token),
-            "user": UserSerializer(user).data,
-        }
-        logger.info(f"User {user.username} (ID: {user.id}) registered successfully")
-        return Response(data, status=201)
-
-    def _handle_registration_error(self, e, serializer):
-        """Handle registration errors"""
-        # Re-raise custom exceptions as they are
-        if isinstance(
-            e,
-            (
-                DuplicateEmailException,
-                MobileNumberAlreadyExists,
-                UsernameAlreadyExists,
-                InvalidOTPException,
-            ),
-        ):
-            logger.warning(f"Registration failed - {type(e).__name__}: {str(e)}")
-            raise
-        # Handle other validation errors
-        logger.error(f"Unexpected error during registration: {str(e)}", exc_info=True)
-        raise InvalidInput(serializer.errors)
 
 
 class StaffRegisterView(APIView):
@@ -189,99 +110,34 @@ class StaffRegisterView(APIView):
         """
         Processes staff registration requests.
 
-        Handles both initial registration (sends OTP) and final registration (verifies OTP).
-        Creates staff user account with 'station_master' role and creates approval request.
+        Handles both initial registration (sends OTP) and final registration
+        (verifies OTP). Creates staff user account with 'station_master' 
+        role and creates approval request.
 
         Args:
             request: HTTP request object containing staff registration data
 
         Returns:
-            Response: Success response with approval status, or OTP sent confirmation
+            Response: Success response with approval status, or OTP sent
+            confirmation
         """
         serializer = StaffRegisterSerializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
-            return self._handle_staff_registration_request(request, serializer)
+            return RegistrationFlowHelper.handle_registration_request(
+                request, serializer, "staff_registration"
+                )
+        except (InvalidInputException, AlreadyExistsException, DRFValidationError) as e:
+            return RegistrationFlowHelper.handle_registration_error(
+                e, serializer, "staff_registration"
+                )
         except Exception as e:
-            return self._handle_staff_registration_error(e, serializer)
+            logger.error(
+                f"Unexpected error during registration: {str(e)}",
+                exc_info=True)
+            return RegistrationFlowHelper.handle_registration_error(e, serializer, "staff_registration")
 
-    def _handle_staff_registration_request(self, request, serializer):
-        """Handle the staff registration request logic"""
-        mobile_number = serializer.validated_data["mobile_number"]
-        email = serializer.validated_data["email"]
-        username = serializer.validated_data["username"]
-        otp = request.data.get("otp")
 
-        if not otp:
-            return self._send_staff_otp_response(mobile_number, email)
-
-        if otp != "123456":
-            logger.warning(
-                f"Invalid OTP provided for staff registration - Email: {email}, Username: {username}"
-            )
-            raise InvalidOTPException()
-
-        return self._complete_staff_registration(serializer)
-
-    def _send_staff_otp_response(self, mobile_number, email):
-        """Send OTP for staff registration and return response"""
-        send_otp(mobile_number, email)
-        logger.info(
-            f"OTP sent for staff registration - Email: {email}, Mobile: {mobile_number}"
-        )
-        return Response(
-            {"detail": UserMessage.OTP_SENT_STAFF_REGISTRATION, "otp": "123456"},
-            status=202,
-        )
-
-    def _complete_staff_registration(self, serializer):
-        """Complete the staff registration process"""
-        # Create staff user with business logic moved from serializer
-        validated_data = serializer.validated_data
-        user = User.objects.create_user(
-            username=validated_data["username"],
-            email=validated_data["email"],
-            mobile_number=validated_data["mobile_number"],
-            password=validated_data["password"],
-            first_name=validated_data.get("first_name", ""),
-            last_name=validated_data.get("last_name", ""),
-            role="station_master",  # Set role to station_master
-            is_active=False,  # Initially inactive until approved
-        )
-        logger.info(
-            f"Staff user created successfully - Username: {user.username}, Email: {user.email}"
-        )
-        StaffRequest.objects.get_or_create(user=user)
-        logger.info(
-            f"Staff user {user.username} (ID: {user.id}) registered successfully, waiting for approval"
-        )
-        return Response(
-            {
-                "detail": UserMessage.STAFF_REGISTRATION_WAITING,
-                "user": UserSerializer(user).data,
-            },
-            status=201,
-        )
-
-    def _handle_staff_registration_error(self, e, serializer):
-        """Handle staff registration errors"""
-        # Re-raise custom exceptions as they are
-        if isinstance(
-            e,
-            (
-                DuplicateEmailException,
-                MobileNumberAlreadyExists,
-                UsernameAlreadyExists,
-                InvalidOTPException,
-            ),
-        ):
-            logger.warning(f"Staff registration failed - {type(e).__name__}: {str(e)}")
-            raise
-        # Handle other validation errors
-        logger.error(
-            f"Unexpected error during staff registration: {str(e)}", exc_info=True
-        )
-        raise InvalidInput(serializer.errors)
 
 
 class LoginView(TokenObtainPairView):
@@ -329,14 +185,15 @@ class LoginView(TokenObtainPairView):
             }
             logger.info(f"User {user.username} (ID: {user.id}) logged in successfully")
             return Response(data)
+        except InvalidCredentialsException as e:
+            logger.error(f"Login failed - {type(e).__name__}: {str(e)}")
+            raise InvalidCredentialsException(UserMessage.INVALID_CREDENTIALS)
+        except InvalidInputException as e:
+            logger.error(f"Login failed - {type(e).__name__}: {str(e)}")
+            raise InvalidInputException(GeneralMessage.INVALID_INPUT)
         except Exception as e:
-            # Re-raise custom exceptions as they are
-            if isinstance(e, (InvalidCredentialsException, InvalidInput)):
-                logger.warning(f"Login failed - {type(e).__name__}: {str(e)}")
-                raise
-            # Handle other validation errors
             logger.error(f"Unexpected error during login: {str(e)}", exc_info=True)
-            raise InvalidInput(serializer.errors)
+            raise Exception(GeneralMessage.SOMETHING_WENT_WRONG)
 
 
 class LogoutView(APIView):
@@ -363,7 +220,6 @@ class LogoutView(APIView):
         Returns:
             Response: Success confirmation message
         """
-        # JWT logout is client-side (just delete token), but you can blacklist if needed
         logger.info(f"User {request.user.username} (ID: {request.user.id}) logged out")
         return Response({"detail": "Logged out successfully."}, status=200)
 
@@ -409,7 +265,7 @@ class ProfileView(generics.RetrieveUpdateAPIView):
         Returns:
             Response: Serialized user profile data
         """
-        logger.debug(
+        logger.info(
             f"User {request.user.username} (ID: {request.user.id}) requested profile"
         )
         return super().get(request, *args, **kwargs)
@@ -442,19 +298,17 @@ class ProfileView(generics.RetrieveUpdateAPIView):
                 f"User {request.user.username} (ID: {request.user.id}) updated profile successfully"
             )
             return Response(UserSerializer(self.request.user).data)
+        except AlreadyExistsException as e:
+            logger.error(
+                f"Profile update failed for user {request.user.username} - {type(e).__name__}: {str(e)}"
+            )
+            raise AlreadyExistsException(AlreadyExistsMessage.EMAIL_ALREADY_EXISTS)
         except Exception as e:
-            # Re-raise custom exceptions as they are
-            if isinstance(e, (DuplicateEmailException, MobileNumberAlreadyExists)):
-                logger.warning(
-                    f"Profile update failed for user {request.user.username} - {type(e).__name__}: {str(e)}"
-                )
-                raise
-            # Handle other validation errors
             logger.error(
                 f"Unexpected error during profile update for user {request.user.username}: {str(e)}",
                 exc_info=True,
             )
-            raise InvalidInput(serializer.errors)
+            raise Exception(GeneralMessage.SOMETHING_WENT_WRONG)
 
 
 class ChangePasswordView(APIView):
@@ -488,17 +342,18 @@ class ChangePasswordView(APIView):
             serializer.is_valid(raise_exception=True)
             user = request.user
             if not user.check_password(serializer.validated_data["old_password"]):
-                logger.warning(
+                logger.error(
                     f"Password change failed for user {user.username} - Wrong old password"
                 )
                 raise InvalidCredentialsException("Wrong password.")
+            
             try:
                 validate_password(serializer.validated_data["new_password"], user)
-            except Exception as e:
-                logger.warning(
-                    f"Password validation failed for user {user.username}: {str(e)}"
+            except InvalidInputException:
+                logger.error(
+                    f"Password validation failed for user {user.username}"
                 )
-                raise InvalidInput(e.messages)
+                raise InvalidInputException(GeneralMessage.INVALID_INPUT)
             user.set_password(serializer.validated_data["new_password"])
             user.save()
             update_session_auth_hash(request, user)
@@ -506,46 +361,16 @@ class ChangePasswordView(APIView):
                 f"User {user.username} (ID: {user.id}) changed password successfully"
             )
             return Response({"detail": UserMessage.PASSWORD_CHANGED_SUCCESS})
-        except Exception as e:
-            # Re-raise custom exceptions as they are
-            if isinstance(e, (InvalidCredentialsException, InvalidInput)):
-                raise
-            # Handle other validation errors
+        except InvalidCredentialsException:
+            raise InvalidCredentialsException(UserMessage.INVALID_CREDENTIALS)
+        except InvalidInputException:
+            raise InvalidInputException(GeneralMessage.INVALID_INPUT)
+        except Exception:
             logger.error(
-                f"Unexpected error during password change for user {request.user.username}: {str(e)}",
+                f"Unexpected error during password change for user {request.user.username}",
                 exc_info=True,
             )
-            raise InvalidInput(serializer.errors)
-
-
-class BookingHistoryView(APIView):
-    """
-    Handles user booking history retrieval.
-
-    This view provides access to user's booking history and related information.
-    Currently serves as a placeholder for future booking history implementation.
-    """
-
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get(self, request):
-        """
-        Retrieves user's booking history.
-
-        Currently returns placeholder data. To be implemented with actual
-        booking history retrieval logic.
-
-        Args:
-            request: HTTP request object
-
-        Returns:
-            Response: Placeholder booking history data
-        """
-        # Placeholder: Replace with actual booking history logic
-        logger.debug(
-            f"User {request.user.username} (ID: {request.user.id}) requested booking history"
-        )
-        return Response({"history": []})
+            raise Exception(GeneralMessage.SOMETHING_WENT_WRONG)
 
 
 # Admin Approval Panel Views
@@ -565,7 +390,7 @@ class StaffRequestListView(generics.ListAPIView):
         Filters staff requests to show only those with 'pending' status
         and includes related user data for efficient querying.
         """
-        logger.debug(
+        logger.info(
             f"Admin {self.request.user.username} (ID: {self.request.user.id}) requested staff requests list"
         )
         return StaffRequest.objects.filter(status="pending").select_related("user")
@@ -588,7 +413,7 @@ class StaffRequestDetailView(generics.RetrieveAPIView):
         Returns comprehensive staff request data including user information,
         request status, timestamps, and processing details.
         """
-        logger.debug(
+        logger.info(
             f"Admin {request.user.username} (ID: {request.user.id}) requested staff request detail for ID: {kwargs.get('pk')}"
         )
         return super().get(request, *args, **kwargs)
@@ -610,17 +435,24 @@ class ApproveStaffRequestView(APIView):
         to approved, activates the user account, and grants staff permissions.
         """
         if not request.user.role or request.user.role != "admin":
-            logger.warning(
-                f"Unauthorized access attempt to approve staff request by user {request.user.username} (ID: {request.user.id})"
+            logger.error(
+                f"Unauthorized access attempt to approve staff request "
+                f"by user {request.user.username} (ID: {request.user.id})"
             )
             raise UnauthorizedAccessException("Admin access required.")
         try:
             staff_request = get_object_or_404(StaffRequest, pk=pk, status="pending")
-        except:
-            logger.warning(
+        except NotFoundException:
+            logger.error(
                 f"Staff request not found for ID: {pk} by admin {request.user.username}"
             )
-            raise UserNotFoundException("Staff request not found.")
+            raise NotFoundException(UserMessage.STAFF_REQUEST_NOT_FOUND)
+        except Exception:
+            logger.error(
+                f"Unexpected error finding staff request for ID: {pk} by admin {request.user.username}",
+                exc_info=True
+            )
+            raise Exception(GeneralMessage.SOMETHING_WENT_WRONG)
 
         staff_request.status = "approved"
         staff_request.processed_at = timezone.now()
@@ -631,7 +463,8 @@ class ApproveStaffRequestView(APIView):
         user.role = "station_master"  # Set role to station_master to make is_staff=True
         user.save()
         logger.info(
-            f"Admin {request.user.username} (ID: {request.user.id}) approved staff request for user {user.username} (ID: {user.id})"
+            f"Admin {request.user.username} (ID: {request.user.id}) approved"
+            f"staff request for user {user.username} (ID: {user.id})"
         )
         return Response({"message": f"Staff request for {user.username} approved."})
 
@@ -653,11 +486,17 @@ class RejectStaffRequestView(APIView):
         """
         try:
             staff_request = get_object_or_404(StaffRequest, pk=pk, status="pending")
-        except:
-            logger.warning(
+        except NotFoundException:
+            logger.error(
                 f"Staff request not found for ID: {pk} by admin {request.user.username}"
             )
-            raise UserNotFoundException("Staff request not found.")
+            raise NotFoundException(UserMessage.STAFF_REQUEST_NOT_FOUND)
+        except Exception :
+            logger.error(
+                f"Unexpected error finding staff request for ID: {pk} by admin {request.user.username}",
+                exc_info=True
+            )
+            raise Exception(GeneralMessage.SOMETHING_WENT_WRONG)
 
         staff_request.status = "rejected"
         staff_request.processed_at = timezone.now()
@@ -667,7 +506,8 @@ class RejectStaffRequestView(APIView):
         user.is_active = False
         user.save()
         logger.info(
-            f"Admin {request.user.username} (ID: {request.user.id}) rejected staff request for user {user.username} (ID: {user.id})"
+            f"Admin {request.user.username} (ID: {request.user.id})"
+            f"rejected staff request for user {user.username} (ID: {user.id})"
         )
         return Response({"detail": f"Staff request for {user.username} rejected."})
 
@@ -692,7 +532,8 @@ class ApproveAllStaffRequestsView(APIView):
         approved_count = self._approve_staff_requests(pending_requests, request.user)
 
         logger.info(
-            f"Admin {request.user.username} (ID: {request.user.id}) approved {approved_count} staff requests"
+            f"Admin {request.user.username} (ID: {request.user.id})"
+            f"approved {approved_count} staff requests"
         )
         return Response(
             {"detail": f"{approved_count} staff requests approved successfully."}
@@ -740,7 +581,8 @@ class RejectAllStaffRequestsView(APIView):
         rejected_count = self._reject_staff_requests(pending_requests, request.user)
 
         logger.info(
-            f"Admin {request.user.username} (ID: {request.user.id}) rejected {rejected_count} staff requests"
+            f"Admin {request.user.username} (ID: {request.user.id})"
+            f"rejected {rejected_count} staff requests"
         )
         return Response({"detail": f"{rejected_count} staff requests rejected."})
 
@@ -775,12 +617,13 @@ def user_tickets(request):
     Only accessible by users with 'user' role, not staff or admin users.
     """
     if getattr(request.user, "role", None) != "user":
-        logger.warning(
-            f"Unauthorized access attempt to user tickets by {request.user.username} (ID: {request.user.id}) with role: {getattr(request.user, 'role', 'None')}"
+        logger.error(
+            f"Unauthorized attempt to user tickets by {request.user.username}"
+            f"(ID: {request.user.id})role: {getattr(request.user, 'role', 'None')}"
         )
         raise UnauthorizedAccessException(UserMessage.USER_NOT_AUTHORIZED)
 
-    logger.debug(
+    logger.info(
         f"User {request.user.username} (ID: {request.user.id}) requested tickets"
     )
     bookings = Booking.objects.filter(user=request.user).order_by("-created_at")

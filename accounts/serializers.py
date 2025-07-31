@@ -1,20 +1,20 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
 from .models import User, StaffRequest
-from django.utils import timezone
-from rest_framework_simplejwt.tokens import RefreshToken
-from exceptions.handlers import (
-    DuplicateEmailException,
-    MobileNumberAlreadyExists,
-    InvalidCredentialsException,
+from exceptions.handlers import InvalidCredentialsException
+from utils.constants import UserMessage
+from utils.validators import UserFieldValidators
+from utils.serializer_helpers import (
+    RegistrationFieldMixin,
+    RegistrationValidationMixin,
+    get_registration_meta_fields,
 )
-from utils.constants import AlreadyExistsMessage, UserMessage
 import logging
 
 logger = logging.getLogger("accounts")
 
 
-class RegisterSerializer(serializers.ModelSerializer):
+class RegisterSerializer(RegistrationFieldMixin, RegistrationValidationMixin, serializers.ModelSerializer):
     """
     Serializer for user registration validation.
 
@@ -26,69 +26,30 @@ class RegisterSerializer(serializers.ModelSerializer):
     Provides comprehensive validation for user registration data.
     """
 
-    email = serializers.EmailField(validators=[])
-    username = serializers.CharField(validators=[])
-    mobile_number = serializers.CharField(validators=[])
-    password = serializers.CharField(write_only=True)
-
     class Meta:
         model = User
-        fields = [
-            "username",
-            "email",
-            "mobile_number",
-            "password",
-            "first_name",
-            "last_name",
-        ]
+        fields = get_registration_meta_fields()
 
     def validate_email(self, value):
         """
         Validates email uniqueness for user registration.
-
-        Checks if the provided email address is already registered in the system.
-        Raises DuplicateEmailException if email already exists.
-
-        Args:
-            value (str): The email address to validate
-
-        Returns:
-            str: The validated email address
-
-        Raises:
-            DuplicateEmailException: If email already exists in the system
         """
-        if User.objects.filter(email=value).exists():
-            logger.warning(f"Registration failed - Email already exists: {value}")
-            raise DuplicateEmailException()
-        return value
+        return super().validate_email(value, "registration")
 
     def validate_mobile_number(self, value):
         """
-        Validates mobile number uniqueness for user registration.
-
-        Checks if the provided mobile number is already registered in the system.
-        Raises MobileNumberAlreadyExists if mobile number already exists.
-
-        Args:
-            value (str): The mobile number to validate
-
-        Returns:
-            str: The validated mobile number
-
-        Raises:
-            MobileNumberAlreadyExists: If mobile number already exists in the system
+        Validates mobile number format and uniqueness for user registration.
         """
-        if User.objects.filter(mobile_number=value).exists():
-            logger.warning(
-                f"Registration failed - Mobile number already exists: {value}"
-            )
-            raise MobileNumberAlreadyExists()
-        # Add mobile number validation logic here (e.g., regex, OTP, etc.)
-        return value
+        return super().validate_mobile_number(value, "registration")
+    
+    def validate_username(self, value):
+        """
+        Validates username format and uniqueness for user registration.
+        """
+        return super().validate_username(value, "registration")
 
 
-class StaffRegisterSerializer(serializers.ModelSerializer):
+class StaffRegisterSerializer(RegistrationFieldMixin, RegistrationValidationMixin, serializers.ModelSerializer):
     """
     Serializer for staff registration validation.
 
@@ -100,65 +61,27 @@ class StaffRegisterSerializer(serializers.ModelSerializer):
     Provides comprehensive validation for staff registration data.
     """
 
-    email = serializers.EmailField(validators=[])
-    username = serializers.CharField(validators=[])
-    mobile_number = serializers.CharField(validators=[])
-    password = serializers.CharField(write_only=True)
-
     class Meta:
         model = User
-        fields = [
-            "username",
-            "email",
-            "mobile_number",
-            "password",
-            "first_name",
-            "last_name",
-        ]
+        fields = get_registration_meta_fields()
 
     def validate_email(self, value):
         """
         Validates email uniqueness for staff registration.
-
-        Checks if the provided email address is already registered in the system.
-        Raises DuplicateEmailException if email already exists.
-
-        Args:
-            value (str): The email address to validate
-
-        Returns:
-            str: The validated email address
-
-        Raises:
-            DuplicateEmailException: If email already exists in the system
         """
-        if User.objects.filter(email=value).exists():
-            logger.warning(f"Staff registration failed - Email already exists: {value}")
-            raise DuplicateEmailException()
-        return value
+        return super().validate_email(value, "staff_registration")
 
     def validate_mobile_number(self, value):
         """
-        Validates mobile number uniqueness for staff registration.
-
-        Checks if the provided mobile number is already registered in the system.
-        Raises MobileNumberAlreadyExists if mobile number already exists.
-
-        Args:
-            value (str): The mobile number to validate
-
-        Returns:
-            str: The validated mobile number
-
-        Raises:
-            MobileNumberAlreadyExists: If mobile number already exists in the system
+        Validates mobile number format and uniqueness for staff registration.
         """
-        if User.objects.filter(mobile_number=value).exists():
-            logger.warning(
-                f"Staff registration failed - Mobile number already exists: {value}"
-            )
-            raise MobileNumberAlreadyExists()
-        return value
+        return super().validate_mobile_number(value, "staff_registration")
+    
+    def validate_username(self, value):
+        """
+        Validates username format and uniqueness for staff registration.
+        """
+        return super().validate_username(value, "staff_registration")
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -202,24 +125,18 @@ class LoginSerializer(serializers.Serializer):
         Authenticates user using provided username and password, checks
         if user account is active, and returns user object for successful login.
 
-        Args:
-            data (dict): Dictionary containing username and password
-
-        Returns:
-            dict: Dictionary containing the authenticated user object
-
         Raises:
             InvalidCredentialsException: If username/password combination is invalid
             ValidationError: If user account is inactive
         """
         user = authenticate(username=data["username"], password=data["password"])
         if not user:
-            logger.warning(
+            logger.error(
                 f"Login failed - Invalid credentials for username: {data['username']}"
             )
             raise InvalidCredentialsException()
         if not user.is_active:
-            logger.warning(f"Login failed - Inactive user: {user.username}")
+            logger.error(f"Login failed - Inactive user: {user.username}")
             raise serializers.ValidationError(UserMessage.USER_INACTIVE)
         logger.debug(f"User authenticated successfully: {user.username}")
         return {"user": user}
@@ -261,52 +178,16 @@ class UpdateProfileSerializer(serializers.ModelSerializer):
     def validate_email(self, value):
         """
         Validates email uniqueness for profile updates.
-
-        Checks if the provided email address is already registered by another user.
-        Excludes the current user from duplicate checking to allow keeping same email.
-        Raises DuplicateEmailException if email already exists for another user.
-
-        Args:
-            value (str): The email address to validate
-
-        Returns:
-            str: The validated email address
-
-        Raises:
-            DuplicateEmailException: If email already exists for another user
         """
         user = self.context["request"].user
-        if User.objects.exclude(pk=user.pk).filter(email=value).exists():
-            logger.warning(
-                f"Profile update failed - Email already exists: {value} for user: {user.username}"
-            )
-            raise DuplicateEmailException()
-        return value
+        return UserFieldValidators.validate_email_uniqueness(value, "profile_update", user)
 
     def validate_mobile_number(self, value):
         """
         Validates mobile number uniqueness for profile updates.
-
-        Checks if the provided mobile number is already registered by another user.
-        Excludes the current user from duplicate checking to allow keeping same mobile number.
-        Raises MobileNumberAlreadyExists if mobile number already exists for another user.
-
-        Args:
-            value (str): The mobile number to validate
-
-        Returns:
-            str: The validated mobile number
-
-        Raises:
-            MobileNumberAlreadyExists: If mobile number already exists for another user
         """
         user = self.context["request"].user
-        if User.objects.exclude(pk=user.pk).filter(mobile_number=value).exists():
-            logger.warning(
-                f"Profile update failed - Mobile number already exists: {value} for user: {user.username}"
-            )
-            raise MobileNumberAlreadyExists()
-        return value
+        return UserFieldValidators.validate_mobile_number_uniqueness(value, "profile_update", user)
 
 
 class StaffRequestSerializer(serializers.ModelSerializer):

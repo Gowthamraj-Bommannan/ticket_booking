@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.utils import timezone
+from utils.constants import Choices
 
 
 class Role(models.Model):
@@ -34,14 +35,16 @@ class CustomUserManager(BaseUserManager):
     def create_user(self, username, email=None, password=None, **extra_fields):
         """
         Create and save a user with the given username, email, and password.
+        Validation is handled by serializers, this method focuses on user creation.
         """
         if not username:
             raise ValueError("The given username must be set")
         email = self.normalize_email(email)
         username = self.model.normalize_username(username)
+        
         user = self.model(username=username, email=email, **extra_fields)
         user.set_password(password)
-        user.save(using=self._db)
+        user.save()
         return user
 
     def create_superuser(self, username, email=None, password=None, **extra_fields):
@@ -69,16 +72,9 @@ class User(AbstractUser):
     Supports three main user types: admin, user, and station_master with
     appropriate permission levels for each role.
     """
-
-    ROLE_CHOICES = [
-        ("admin", "Admin"),
-        ("user", "User"),
-        ("station_master", "Station Master"),
-    ]
-
-    email = models.EmailField(unique=True)
-    mobile_number = models.CharField(max_length=15, unique=True)
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="user")
+    email = models.EmailField()
+    mobile_number = models.CharField(max_length=15)
+    role = models.CharField(max_length=20, choices=Choices.ROLE_CHOICES, default="user")
     created_at = models.DateTimeField(default=timezone.now)
     last_login = models.DateTimeField(blank=True, null=True)
 
@@ -86,14 +82,6 @@ class User(AbstractUser):
     USERNAME_FIELD = "username"
 
     objects = CustomUserManager()
-
-    def save(self, *args, **kwargs):
-        """
-        Overrides the default save method to ensure created_at timestamp is set.
-        """
-        if not self.created_at:
-            self.created_at = timezone.localtime(timezone.now())
-        super().save(*args, **kwargs)
 
     @property
     def is_staff(self):
@@ -130,17 +118,10 @@ class StaffRequest(models.Model):
     Provides a comprehensive audit trail for staff approval decisions
     and supports the complete staff onboarding workflow.
     """
-
-    STATUS_CHOICES = [
-        ("pending", "Pending"),
-        ("approved", "Approved"),
-        ("rejected", "Rejected"),
-    ]
-
     user = models.OneToOneField(
         User, on_delete=models.CASCADE, related_name="staff_request"
     )
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    status = models.CharField(max_length=20, choices=Choices.STATUS_CHOICES, default="pending")
     requested_at = models.DateTimeField(auto_now_add=True)
     processed_at = models.DateTimeField(null=True, blank=True)
     processed_by = models.ForeignKey(

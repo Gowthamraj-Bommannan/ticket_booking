@@ -18,9 +18,11 @@ class Booking(models.Model):
         ("FAILED", "Failed"),
         ("PENDING", "Pending"),
     ]
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="bookings")
+    user = models.ForeignKey(User, on_delete=models.CASCADE,
+                             related_name="bookings")
     from_station = models.ForeignKey(
-        "stations.Station", on_delete=models.CASCADE, related_name="source_bookings"
+        "stations.Station", on_delete=models.CASCADE,
+        related_name="source_bookings"
     )
     to_station = models.ForeignKey(
         "stations.Station",

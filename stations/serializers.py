@@ -1,10 +1,8 @@
 import logging
-
-logger = logging.getLogger("stations")
 from rest_framework import serializers
 from .models import Station
-from exceptions.handlers import StationAlreadyExistsException
 
+logger = logging.getLogger("stations")
 
 class StationSerializer(serializers.ModelSerializer):
     """

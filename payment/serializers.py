@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import PaymentTransaction
 from exceptions.handlers import InvalidPaymentMethodException
-
+from utils.constants import PaymentMessage
 
 class PaymentTransactionSerializer(serializers.ModelSerializer):
     """
@@ -39,7 +39,8 @@ class PaymentTransactionSerializer(serializers.ModelSerializer):
         Raises error if invalid.
         """
         if value <= 0:
-            raise serializers.ValidationError("Amount must be greater than zero.")
+            raise serializers.ValidationError(PaymentMessage.
+                                              PAYMENT_AMOUNT_ZERO)
         return value
 
     def validate_transaction_id(self, value):
@@ -47,7 +48,8 @@ class PaymentTransactionSerializer(serializers.ModelSerializer):
         Validates that the transaction ID is not blank.
         """
         if not value or not value.strip():
-            raise serializers.ValidationError("Transaction ID cannot be blank.")
+            raise serializers.ValidationError(PaymentMessage.
+                                              PAYMENT_TRANSACTION_ID_BLANK)
         return value
 
     def validate_status(self, value):
@@ -57,6 +59,6 @@ class PaymentTransactionSerializer(serializers.ModelSerializer):
         allowed_statuses = ["SUCCESS", "FAILED"]
         if value not in allowed_statuses:
             raise serializers.ValidationError(
-                "Status must be either SUCCESS or FAILED."
+                PaymentMessage.PAYMENT_STATUS_INVALID
             )
         return value

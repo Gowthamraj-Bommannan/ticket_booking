@@ -8,18 +8,16 @@ from rest_framework.decorators import action
 from exceptions.handlers import (
     RoutePermissionDeniedException,
     StationNotFoundException,
-    RouteInvalidInputException,
     RouteFromAndToSameException,
     RouteInvalidDistanceException,
     RouteAlreadyExistsException,
     RouteStopsNotFoundException,
 )
-from utils.constants import RouteMessage, StationMessage
+from utils.constants import RouteMessage
 import logging
 import heapq
 
 logger = logging.getLogger("routes")
-
 
 class IsAdminSuperUser(BasePermission):
     """
@@ -224,7 +222,8 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
         Raises error if it does.
         """
         existing_edge = (
-            RouteEdge.objects.filter(from_station=from_station, is_active=True)
+            RouteEdge.objects.filter(from_station=from_station, 
+                                     is_active=True)
             .exclude(to_station=to_station)
             .first()
         )
@@ -251,7 +250,8 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
                 return [new_edge1, new_edge2]
         return None
 
-    def _create_new_edge(self, from_station, to_station, distance, is_bidirectional):
+    def _create_new_edge(self, from_station, to_station, 
+                         distance, is_bidirectional):
         """
         Creates a new edge between two stations.
         Raises error if it does.
@@ -338,5 +338,6 @@ class RouteTemplateViewSet(viewsets.ModelViewSet):
             visited.add(current)
             for neighbor, weight in graph.get(current, []):
                 if neighbor not in visited:
-                    heapq.heappush(queue, (dist + weight, neighbor, path + [neighbor]))
+                    heapq.heappush(queue, (dist + weight, neighbor,
+                                           path + [neighbor]))
         return []

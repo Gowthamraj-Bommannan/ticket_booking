@@ -6,7 +6,6 @@ from .views import (
     LogoutView,
     ProfileView,
     ChangePasswordView,
-    BookingHistoryView,
     StaffRequestListView,
     StaffRequestDetailView,
     ApproveStaffRequestView,
@@ -28,8 +27,7 @@ urlpatterns = [
     path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     # User Profile Management
     path("api/profile/", ProfileView.as_view(), name="profile"),
-    path("api/change-password/", ChangePasswordView.as_view(), name="change-password"),
-    path("api/booking-history/", BookingHistoryView.as_view(), name="booking-history"),
+    path("api/profile/change-password/", ChangePasswordView.as_view(), name="change-password"),
     path("api/user/tickets/", user_tickets, name="user-tickets"),
     # Admin Staff Approval Panel
     path(

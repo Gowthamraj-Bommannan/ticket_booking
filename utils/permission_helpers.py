@@ -1,6 +1,30 @@
 from rest_framework import permissions
 
 
+class RoleBasedPermissions:
+    """
+    Reusable permission classes to eliminate code duplication.
+    """
+    
+    @staticmethod
+    def has_role(request, allowed_roles):
+        """
+        Generic role-based permission check.
+        
+        Args:
+            request: HTTP request object
+            allowed_roles (list): List of allowed roles
+            
+        Returns:
+            bool: True if user has one of the allowed roles
+        """
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and getattr(request.user, "role", None) in allowed_roles
+        )
+
+
 class IsAdminUser(permissions.BasePermission):
     """
     Custom permission class to restrict access to admin users only.
@@ -24,11 +48,7 @@ class IsAdminUser(permissions.BasePermission):
         Returns:
             bool: True if user is authenticated and has admin role, False otherwise
         """
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and request.user.role == "admin"
-        )
+        return RoleBasedPermissions.has_role(request, ["admin"])
 
 
 class IsStaffOrAdmin(permissions.BasePermission):
@@ -54,11 +74,7 @@ class IsStaffOrAdmin(permissions.BasePermission):
         Returns:
             bool: True if user is authenticated and has staff or admin role, False otherwise
         """
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and request.user.role in ["admin", "station_master"]
-        )
+        return RoleBasedPermissions.has_role(request, ["admin", "station_master"])
 
 
 class IsOwnerOrAdmin(permissions.BasePermission):
@@ -87,7 +103,7 @@ class IsOwnerOrAdmin(permissions.BasePermission):
             bool: True if user is admin or object owner, False otherwise
         """
         # Admin can access any object
-        if request.user.role == "admin":
+        if getattr(request.user, "role", None) == "admin":
             return True
 
         # Check if the object has a user attribute
@@ -99,27 +115,5 @@ class IsOwnerOrAdmin(permissions.BasePermission):
         return False
 
 
-class IsStationMasterOrAdmin(permissions.BasePermission):
-    """
-    Custom permission class to restrict access to station masters or admin users.
-
-    This permission class allows access to users with station_master role
-    or admin role. Used for station-specific operations.
-    """
-
-    def has_permission(self, request, view):
-        """
-        Determines if the requesting user has station master or admin permissions.
-
-        Args:
-            request: The HTTP request object
-            view: The view being accessed
-
-        Returns:
-            bool: True if user is authenticated and has station_master or admin role, False otherwise
-        """
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and request.user.role in ["admin", "station_master"]
-        )
+# Alias for backward compatibility - both classes are identical
+IsStationMasterOrAdmin = IsStaffOrAdmin 

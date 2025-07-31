@@ -1,3 +1,19 @@
+# ---------- ROLE AND STATUS CHOICES ----------
+
+class Choices:
+    ROLE_CHOICES = [
+            ("admin", "Admin"),
+            ("user", "User"),
+            ("station_master", "Station Master"),
+        ]
+
+    STATUS_CHOICES = [
+            ("pending", "Pending"),
+            ("approved", "Approved"),
+            ("rejected", "Rejected"),
+        ]
+
+
 # ---------- USER MESSAGES ----------
 class UserMessage:
     USER_NOT_FOUND = "User not found."
@@ -20,6 +36,10 @@ class UserMessage:
     INVALID_OTP = "Invalid OTP."
     PASSWORD_CHANGED_SUCCESS = "Password changed successfully."
     USER_NOT_AUTHORIZED = "Only users can view their tickets."
+    STAFF_REQUEST_NOT_FOUND = "Staff request not found."
+    USERNAME_TOO_SHORT = "Username must be at least 5 characters long."
+    MOBILE_NUMBER_INVALID = "Mobile number must be exactly 10 digits and numeric."
+    
 
 
 # ---------- FIELD VALIDATION ----------
@@ -35,6 +55,7 @@ class FieldValidationMessage:
     PASSWORD_TOO_LONG = "Password must not exceed 16 characters."
     PASSWORD_LONG_OR_SHORT = "Password must be 8 to 16 characters long."
     FIRST_NAME_REQUIRED = "First name is required."
+    INVALID_INPUT = "Invalid input provided."
 
 
 # ---------- UNIQUE FIELD CONFLICTS ----------
@@ -45,9 +66,10 @@ class AlreadyExistsMessage:
 
 
 class GeneralMessage:
-    INVALID_INPUT = "Invalid input."
+    INVALID_INPUT = "Invalid input provided."
     QUERY_MISSING = "Search query parameter is required."
     PERMISSION_DENIED = "You do not have permission to perform this action."
+    SOMETHING_WENT_WRONG = "Something went wrong. Please try again later."
 
 
 # ---------STATION CONSTANTS-----------
@@ -141,6 +163,9 @@ class PaymentMessage:
     PAYMENT_REFUND_INITIATED = "Refund has been initiated for this payment."
     PAYMENT_UNAUTHORIZED = "You are not authorized to perform this payment."
     PAYMENT_SESSION_EXPIRED = "Payment session has expired. Please start again."
+    PAYMENT_AMOUNT_ZERO = "Amount must be greater than zero."
+    PAYMENT_TRANSACTION_ID_BLANK = "Transaction ID cannot be blank."
+    PAYMENT_STATUS_INVALID = "Status must be SUCCESS or FAILED."
 
 
 class BookingMessage:

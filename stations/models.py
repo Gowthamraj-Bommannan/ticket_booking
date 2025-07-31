@@ -1,7 +1,5 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.utils import timezone
-from django.apps import apps
 from django.db import models
 
 
@@ -10,10 +8,6 @@ class ActiveManager(models.Manager):
 
     def get_queryset(self):
         return super().get_queryset().filter(is_active=True)
-
-
-# Create your models here.
-
 
 class Station(models.Model):
     """
@@ -26,7 +20,7 @@ class Station(models.Model):
     city = models.CharField(max_length=100)
     state = models.CharField(max_length=100)
     is_active = models.BooleanField(
-        default=True, help_text="Indicates if the station is active or soft deleted"
+        default=True, help_text="Indicates if the station is active or not"
     )
     station_master = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -35,7 +29,7 @@ class Station(models.Model):
         blank=True,
         limit_choices_to={"role": "station_master", "is_active": True},
         related_name="station",
-        help_text="Assign a user with role=station_master and is_active=True.",
+        help_text="Assign a user with role=station_master and is_active=True",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -63,7 +57,7 @@ class Station(models.Model):
         if self.station_master:
             if not self.station_master.is_active:
                 raise ValidationError(
-                    {"station_master": "User must be active (is_active=True)."}
+                    {"station_master": "User must be active"}
                 )
             if self.station_master.role != "station_master":
                 raise ValidationError(

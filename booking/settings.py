@@ -70,6 +70,10 @@ MIDDLEWARE = [
 # Logging Configuration
 LOGS_DIR = os.path.join(BASE_DIR, '..', 'logs')
 
+# Ensure logs directory exists
+if not os.path.exists(LOGS_DIR):
+    os.makedirs(LOGS_DIR, exist_ok=True)
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -84,9 +88,10 @@ LOGGING = {
             'level': 'DEBUG',
             'class': 'logging.handlers.RotatingFileHandler',
             'filename': os.path.join(LOGS_DIR, 'logs.log'),
-            'maxBytes': 10 * 1024 * 1024,  # 5MB
+            'maxBytes': 1 * 1024 * 1024,  # 10MB instead of 1MB
             'backupCount': 5,
             'formatter': 'verbose',
+            'delay': True,  # Delay file creation until first write
         },
         'console': {
             'level': 'DEBUG',
