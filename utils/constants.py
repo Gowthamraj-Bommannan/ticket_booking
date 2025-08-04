@@ -12,6 +12,27 @@ class Choices:
             ("approved", "Approved"),
             ("rejected", "Rejected"),
         ]
+    
+    TRAIN_TYPE_CHOICES = [
+        ("Local", "local"),
+        ("Fast", "fast"),
+        ("AC", "ac")
+        ]
+    
+    DIRECTION_CHOICES = [
+        ("up", "Up"),
+        ("down", "Down")
+        ]
+    
+    PAYMENT_METHOD_CHOICES = [
+        ("UPI", "UPI"),
+        ("WALLET", "Wallet"),
+    ]
+
+    PAYMENT_STATUS_CHOICES = [
+        ("SUCCESS", "SUCCESS"),
+        ("FAILED", "FAILED"),
+    ]
 
 
 # ---------- USER MESSAGES ----------
@@ -39,23 +60,12 @@ class UserMessage:
     STAFF_REQUEST_NOT_FOUND = "Staff request not found."
     USERNAME_TOO_SHORT = "Username must be at least 5 characters long."
     MOBILE_NUMBER_INVALID = "Mobile number must be exactly 10 digits and numeric."
-    
-
-
-# ---------- FIELD VALIDATION ----------
-class FieldValidationMessage:
-    USERNAME_REQUIRED = "Username is required."
-    USERNAME_TOO_SHORT = "Username must be at least 3 characters long."
-    EMAIL_REQUIRED = "Email is required."
-    EMAIL_INVALID = "Invalid email format."
-    MOBILE_REQUIRED = "Mobile number is required."
-    MOBILE_INVALID = "Mobile number must be 10 digits and start with 6 to 9."
-    PASSWORD_REQUIRED = "Password is required."
+    MASTER_NOT_FOUND = "Station Master not found with this ID {user_id}."
+    NOT_STATION_MASTER = "User is not a station master."
     PASSWORD_TOO_SHORT = "Password must be at least 8 characters long."
     PASSWORD_TOO_LONG = "Password must not exceed 16 characters."
-    PASSWORD_LONG_OR_SHORT = "Password must be 8 to 16 characters long."
-    FIRST_NAME_REQUIRED = "First name is required."
-    INVALID_INPUT = "Invalid input provided."
+    STATION_MASTER_EXISTS = "Station master already exist for this station."
+    MASTER_ALREADY_ASSIGNED = "Station master already assigned to another station."
 
 
 # ---------- UNIQUE FIELD CONFLICTS ----------
@@ -80,7 +90,7 @@ class StationMessage:
     STATION_CODE_REQUIRED = "Station code is required."
     STATION_NAME_REQUIRED = "Station name is required."
     STATION_NAME_TOO_SHORT = "Station name must be at least 3 characters."
-    STATION_CODE_TOO_SHORT = "Station code must be at least 2 characters."
+    STATION_CODE_INVALID = "Station code must be 2 to 5 characters."
     STATION_SEARCH_QUERY_REQUIRED = "Search query for station is required."
     STATION_DELETED_SUCCESSFULLY = "Station deleted successfully."
     STATION_UPDATED = "Station Updated Successfully."
@@ -98,6 +108,7 @@ class StationMessage:
     STATION_INACTIVE_FOR_ROUTE = "Cannot create route with inactive station."
     STATION_INACTIVE_FOR_BOOKING = "Cannot create booking with inactive station."
     STATION_MASTER_EXISTS = "Station master already exist for this station."
+    
 
 
 # ------------TRAIN CONSTANTS-------------
@@ -144,12 +155,16 @@ class RouteMessage:
     ROUTE_EDGE_INVALID_DISTANCE = "Distance must be a positive integer."
     ROUTE_EDGE_FROM_STATION_REQUIRED = "From station is required."
     ROUTE_EDGE_TO_STATION_REQUIRED = "To station is required."
-    ROUTE_EDGE_FROM_STATION_NOT_FOUND = "From station not found."
+    ROUTE_EDGE_STATION_NOT_FOUND = "From or to station not found."
     ROUTE_EDGE_FROM_AND_TO_SAME = "from_station and to_station must be different."
     ROUTE_EDGE_PERMISSION_DENIED = "You do not have permission to create route edges."
-    ROUTE_NOT_FOUND_BETWEEN = "No route found"
+    ROUTE_NOT_FOUND_BETWEEN = "No route found between {from_station} and {to_station}."
     ROUTE_ALREADY_EXISTS_IN_SAME_TIME = "Route already exists in this timings."
-
+    ROUTE_EDGE_UNIDIRECTIONAL_EXISTS = "A unidirectional edge in this direction already exists."
+    ROUTE_EDGE_MISSING_FIELDS = "Missing required fields: from_station, to_station, or distance."
+    ROUTE_EDGE_CATEGORY_INVALID = "Category must be 'local' or 'fast'."
+    ROUTE_EDGE_NO_STOPS = "Train should have atleast one stop."
+    ROUTE_TEMPLATE_NOT_ENOUGH_STOPS = "Route template does not have enough stops."
 
 # ----------- PAYMENT CONSTANTS -------------
 class PaymentMessage:

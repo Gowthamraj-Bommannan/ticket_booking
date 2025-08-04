@@ -1,17 +1,17 @@
 from rest_framework import serializers
 from .models import Booking
-from stations.models import Station
-from .services import validate_booking_request
+from utils.validators import BookingValidators
+from utils.booking_helpers import BookingHelpers
 from exceptions.handlers import (
-    FromAndToMustBeDifferent, StationNotFoundException
+    InvalidInputException, NotFoundException
     )
-from utils.constants import BookingMessage
+from utils.constants import BookingMessage, StationMessage
 
 
 class BookingSerializer(serializers.ModelSerializer):
     """
     Serializes booking data for API usage.
-    Handles validation and representation.
+    Handles validation and representation using centralized validators.
     """
 
     from_station_code = serializers.CharField(write_only=True)
@@ -56,24 +56,23 @@ class BookingSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         """
-        Validates booking request data.
+        Validates booking request data using centralized validators.
         Checks for duplicate stations, invalid class type, and station existence.
         """
         from_code = data.get("from_station_code", "").strip().upper()
         to_code = data.get("to_station_code", "").strip().upper()
         class_type = data.get("class_type", "GENERAL")
-        if from_code == to_code:
-            raise FromAndToMustBeDifferent()
-        if class_type not in dict(Booking.CLASS_CHOICES):
-            raise serializers.ValidationError(BookingMessage.INVALID_CLASS_TYPE)
-        try:
-            from_station = Station.objects.get(code__iexact=from_code)
-            to_station = Station.objects.get(code__iexact=to_code)
-        except Station.DoesNotExist:
-            raise StationNotFoundException()
-        is_valid, error_message, available_trains = validate_booking_request(
+        
+        # Use centralized validators
+        from_station, to_station = BookingValidators.validate_station_pair(from_code, to_code)
+        BookingValidators.validate_class_type(class_type)
+        
+        # Use optimized booking request validation
+        is_valid, error_message, available_trains = BookingHelpers.validate_booking_request_optimized(
             from_station, to_station, class_type
         )
+        
         if not is_valid:
             raise serializers.ValidationError(error_message)
+        
         return data

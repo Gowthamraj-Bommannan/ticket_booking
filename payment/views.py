@@ -1,64 +1,70 @@
 from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from .models import PaymentTransaction
 from .serializers import PaymentTransactionSerializer
-from bookingsystem.models import Booking
+from utils.queryset_helpers import UserSpecificQuerysetMixin
+from utils.validators import PaymentValidators
+from utils.payment_helpers import PaymentHelpers
 from exceptions.handlers import (
-    PaymentAlreadySuccessException,
-    PaymentUnauthorizedException,
-    PaymentFailedException,
-    PermissionDeniedException,
-    PaymentNotFoundException,
-)
+    MethodNotAllowedException,
+    )
+from utils.constants import PaymentMessage
 import logging
-import uuid
 
 logger = logging.getLogger("payment")
 
 
-class PaymentTransactionViewSet(viewsets.ModelViewSet):
+class PaymentTransactionViewSet(UserSpecificQuerysetMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing payment transactions.
-    Supports CRUD operations and payment processing.
+    Supports CRUD operations and payment processing with optimized database hits.
     """
 
     queryset = PaymentTransaction.objects.all()
     serializer_class = PaymentTransactionSerializer
     permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        """
-        Returns payment transactions for the current user only.
-        Ensures users cannot access others' payments.
-        """
-        user = self.request.user
-        return PaymentTransaction.objects.filter(booking__user=user)
+    user_field = "booking__user"  # Specify the user relationship field
 
     def create(self, request, *args, **kwargs):
         """
-        Handles payment creation requests.
-        Validates and processes payment data.
+        Handles payment creation requests with optimized database hits.
+        Uses centralized validators and helpers.
         """
         user = request.user
-        self._validate_user(user)
-        booking = self._get_and_validate_booking(request, user)
-        self._check_existing_payment(booking)
+        
+        # Validate user authorization using centralized validator
+        PaymentValidators.validate_user_authorized(user)
+        
+        # Get and validate booking with optimized query
+        booking_id = request.data.get("booking")
+        booking = PaymentValidators.validate_booking_for_payment(booking_id, user)
+        
+        # Check existing payment using centralized validator
+        PaymentValidators.check_existing_successful_payment(booking)
+        
+        # Validate serializer data
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        
+        # Validate amount matches booking fare
         amount = serializer.validated_data.get("amount")
-        self._validate_amount(amount, booking, booking.id)
-        transaction_id = self._get_or_generate_transaction_id(serializer)
-        payment = serializer.save(
-            booking=booking, paid_at=timezone.now(), transaction_id=transaction_id
+        PaymentValidators.validate_payment_amount_matches_booking(amount, booking)
+        
+        # Generate transaction ID using centralized helper
+        transaction_id = PaymentHelpers.get_or_generate_transaction_id(
+            serializer.validated_data.get("transaction_id")
         )
-        booking.booking_status = "BOOKED" if payment.status == "SUCCESS" else "FAILED"
-        booking.save()
+        
+        # Create payment with optimized queries
+        payment = PaymentHelpers.create_payment_with_optimized_queries(
+            serializer, booking, transaction_id
+        )
+        
         logger.info(
             f"Payment {payment.status} for booking ticket - {booking.id} by user {user}"
         )
+        
         headers = self.get_success_headers(serializer.data)
         return Response(
             {
@@ -69,72 +75,23 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
             headers=headers,
         )
 
-    def _validate_user(self, user):
-        """
-        Raises exception if user is staff or superuser.
-        """
-        if getattr(user, "is_staff", False) or getattr(user, "is_superuser", False):
-            logger.warning(f"Admin/staff {user} attempted to make a payment.")
-            raise PaymentUnauthorizedException()
-
-    def _get_and_validate_booking(self, request, user):
-        """
-        Retrieves and validates the booking for the user.
-        Raises exception if not found or not pending.
-        """
-        booking_id = request.data.get("booking")
-        booking = get_object_or_404(Booking, id=booking_id, user=user)
-        if getattr(booking, "booking_status", None) != "PENDING":
-            logger.warning(f"Booking {booking_id} not found for payment.")
-            raise PaymentNotFoundException()
-        return booking
-
-    def _check_existing_payment(self, booking):
-        """
-        Raises exception if a successful payment already exists for the booking.
-        """
-        if PaymentTransaction.objects.filter(
-            booking=booking, status="SUCCESS"
-        ).exists():
-            logger.warning(f"Payment already completed for booking {booking.id}")
-            raise PaymentAlreadySuccessException()
-
-    def _validate_amount(self, amount, booking, booking_id):
-        """
-        Validates that the payment amount matches the booking fare.
-        """
-        if float(amount) != float(getattr(booking, "total_fare", 0)):
-            logger.warning(
-                f"Payment amount does not match booking fare for booking {booking_id}"
-            )
-            raise PaymentFailedException()
-
-    def _get_or_generate_transaction_id(self, serializer):
-        """
-        Returns transaction_id from serializer or generates a new one.
-        """
-        transaction_id = serializer.validated_data.get("transaction_id")
-        if not transaction_id:
-            transaction_id = str(uuid.uuid4())
-        return transaction_id
-
     def update(self, request, *args, **kwargs):
         """
         Handles payment update requests.
         Updates payment status or details.
         """
-        raise PermissionDeniedException()
+        raise MethodNotAllowedException(PaymentMessage.PAYMENT_UNAUTHORIZED)
 
     def partial_update(self, request, *args, **kwargs):
         """
         Disallow partial update of payments.
         Always raises a permission exception.
         """
-        raise PermissionDeniedException()
+        raise MethodNotAllowedException(PaymentMessage.PAYMENT_UNAUTHORIZED)
 
     def destroy(self, request, *args, **kwargs):
         """
         Deletes a payment transaction.
         Removes payment record from database.
         """
-        raise PermissionDeniedException()
+        raise MethodNotAllowedException(PaymentMessage.PAYMENT_UNAUTHORIZED)

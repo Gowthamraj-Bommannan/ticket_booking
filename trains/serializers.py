@@ -1,10 +1,7 @@
 import logging
 from rest_framework import serializers
 from .models import Train, TrainSchedule
-from utils.constants import TrainMessage
-from exceptions.handlers import ScheduleAlreadyExists
-from utils.constants import TrainMessage
-from exceptions.handlers import TrainAlreadyExistsException, ScheduleAlreadyExists
+from utils.validators import TrainValidators
 
 logger = logging.getLogger("trains")
 
@@ -35,13 +32,8 @@ class TrainCreateUpdateSerializer(serializers.ModelSerializer):
         """
         Validates that the train number is unique among all trains if provided.
         """
-        queryset = Train.all_objects.filter(train_number=value)
-        if self.instance:
-            queryset = queryset.exclude(pk=self.instance.pk)
-        if queryset.exists():
-            logger.error(f"Train number already exists: {value}")
-            raise TrainAlreadyExistsException()
-        return value
+        exclude_pk = self.instance.pk if self.instance else None
+        return TrainValidators.validate_train_number_uniqueness(value, exclude_pk)
 
     def validate(self, data):
         """
@@ -77,13 +69,10 @@ class TrainScheduleSerializer(serializers.ModelSerializer):
         train = data.get("train")
         direction = data.get("direction")
         start_time = data.get("start_time")
+        
         # Only check if all required fields are present
         if train and direction and start_time:
-            qs = TrainSchedule.objects.filter(
-                train=train, start_time=start_time, direction=direction, is_active=True
-            )
-            if self.instance:
-                qs = qs.exclude(pk=self.instance.pk)
-            if qs.exists():
-                raise ScheduleAlreadyExists(TrainMessage.SCHEDULE_ALREADY_EXISTS)
+            exclude_pk = self.instance.pk if self.instance else None
+            TrainValidators.validate_schedule_uniqueness(train, start_time, direction, exclude_pk)
+        
         return data

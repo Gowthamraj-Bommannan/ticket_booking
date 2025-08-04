@@ -1,12 +1,11 @@
 from rest_framework import serializers
 from .models import PaymentTransaction
-from exceptions.handlers import InvalidPaymentMethodException
-from utils.constants import PaymentMessage
+from utils.validators import PaymentValidators
 
 class PaymentTransactionSerializer(serializers.ModelSerializer):
     """
     Serializer for PaymentTransaction model.
-    Handles validation for payment fields.
+    Handles validation for payment fields using centralized validators.
     """
 
     transaction_id = serializers.CharField(required=False)
@@ -26,39 +25,27 @@ class PaymentTransactionSerializer(serializers.ModelSerializer):
     def validate_payment_method(self, value):
         """
         Validates that the payment method is UPI or WALLET.
-        Raises exception if invalid.
+        Uses centralized validator.
         """
-        allowed_methods = ["UPI", "WALLET"]
-        if value not in allowed_methods:
-            raise InvalidPaymentMethodException()
-        return value
+        return PaymentValidators.validate_payment_method(value)
 
     def validate_amount(self, value):
         """
         Validates that the payment amount is positive.
-        Raises error if invalid.
+        Uses centralized validator.
         """
-        if value <= 0:
-            raise serializers.ValidationError(PaymentMessage.
-                                              PAYMENT_AMOUNT_ZERO)
-        return value
+        return PaymentValidators.validate_payment_amount(value)
 
     def validate_transaction_id(self, value):
         """
         Validates that the transaction ID is not blank.
+        Uses centralized validator.
         """
-        if not value or not value.strip():
-            raise serializers.ValidationError(PaymentMessage.
-                                              PAYMENT_TRANSACTION_ID_BLANK)
-        return value
+        return PaymentValidators.validate_transaction_id(value)
 
     def validate_status(self, value):
         """
         Validates that the status is SUCCESS or FAILED.
+        Uses centralized validator.
         """
-        allowed_statuses = ["SUCCESS", "FAILED"]
-        if value not in allowed_statuses:
-            raise serializers.ValidationError(
-                PaymentMessage.PAYMENT_STATUS_INVALID
-            )
-        return value
+        return PaymentValidators.validate_payment_status(value)

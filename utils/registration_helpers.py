@@ -9,7 +9,7 @@ from utils.constants import UserMessage, GeneralMessage
 import logging
 from exceptions.handlers import (
             AlreadyExistsException,
-            InvalidOTPException,
+            PermissionDeniedException,
             InvalidInputException,
         )
 
@@ -138,7 +138,7 @@ class RegistrationFlowHelper:
         Raises:
             The original exception or InvalidInput
         """       
-        if isinstance(e, (AlreadyExistsException, InvalidOTPException)):
+        if isinstance(e, (AlreadyExistsException, PermissionDeniedException)):
             logger.error(f"{context.title()} failed - {type(e).__name__}: {str(e)}")
             raise
         if isinstance(e, InvalidInputException):

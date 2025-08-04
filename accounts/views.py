@@ -25,7 +25,6 @@ from bookingsystem.serializers import BookingSerializer
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from exceptions.handlers import (
-    InvalidCredentialsException,
     AlreadyExistsException,
     InvalidInputException,
     UnauthorizedAccessException,
@@ -185,9 +184,9 @@ class LoginView(TokenObtainPairView):
             }
             logger.info(f"User {user.username} (ID: {user.id}) logged in successfully")
             return Response(data)
-        except InvalidCredentialsException as e:
+        except UnauthorizedAccessException as e:
             logger.error(f"Login failed - {type(e).__name__}: {str(e)}")
-            raise InvalidCredentialsException(UserMessage.INVALID_CREDENTIALS)
+            raise UnauthorizedAccessException(UserMessage.INVALID_CREDENTIALS)
         except InvalidInputException as e:
             logger.error(f"Login failed - {type(e).__name__}: {str(e)}")
             raise InvalidInputException(GeneralMessage.INVALID_INPUT)
@@ -345,7 +344,7 @@ class ChangePasswordView(APIView):
                 logger.error(
                     f"Password change failed for user {user.username} - Wrong old password"
                 )
-                raise InvalidCredentialsException("Wrong password.")
+                raise UnauthorizedAccessException(UserMessage.INVALID_CREDENTIALS)
             
             try:
                 validate_password(serializer.validated_data["new_password"], user)
@@ -361,8 +360,8 @@ class ChangePasswordView(APIView):
                 f"User {user.username} (ID: {user.id}) changed password successfully"
             )
             return Response({"detail": UserMessage.PASSWORD_CHANGED_SUCCESS})
-        except InvalidCredentialsException:
-            raise InvalidCredentialsException(UserMessage.INVALID_CREDENTIALS)
+        except UnauthorizedAccessException:
+            raise UnauthorizedAccessException(UserMessage.INVALID_CREDENTIALS)
         except InvalidInputException:
             raise InvalidInputException(GeneralMessage.INVALID_INPUT)
         except Exception:
@@ -439,7 +438,7 @@ class ApproveStaffRequestView(APIView):
                 f"Unauthorized access attempt to approve staff request "
                 f"by user {request.user.username} (ID: {request.user.id})"
             )
-            raise UnauthorizedAccessException("Admin access required.")
+            raise UnauthorizedAccessException(GeneralMessage.PERMISSION_DENIED)
         try:
             staff_request = get_object_or_404(StaffRequest, pk=pk, status="pending")
         except NotFoundException:

@@ -23,6 +23,12 @@ class RouteEdge(models.Model):
     class Meta:
         unique_together = ("from_station", "to_station", "is_active")
         db_table = "route_graph"
+        indexes = [
+            models.Index(fields=['from_station', 'to_station', 'is_active']),
+            models.Index(fields=['is_bidirectional', 'is_active']),
+            models.Index(fields=['is_active']),
+            models.Index(fields=['distance']),
+        ]
 
     def __str__(self):
         return f"{self.from_station} to {self.to_station} ({self.distance} km)"
@@ -52,6 +58,11 @@ class RouteTemplate(models.Model):
     class Meta:
         unique_together = ["from_station", "to_station", "category"]
         db_table = "templates"
+        indexes = [
+            models.Index(fields=['from_station', 'to_station', 'category']),
+            models.Index(fields=['category']),
+            models.Index(fields=['is_active']),
+        ]
 
     def __str__(self):
         return f"{self.name} {self.from_station} {self.to_station} {self.category}"

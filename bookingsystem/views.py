@@ -7,19 +7,14 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import Booking
 from .serializers import BookingSerializer
-from stations.models import Station
+from utils.queryset_helpers import UserFilterableQuerysetMixin
+from utils.validators import BookingValidators
+from utils.booking_helpers import BookingHelpers
+from utils.constants import BookingMessage, StationMessage
 from exceptions.handlers import (
-    StationNotFoundException,
-    FromAndToMustBeDifferent,
-    NewToStationRequired,
-    OnlyBookedTicketsExchanged,
-    FromAndToStationsRequired,
-    BookingUnauthorizedException,
-)
-from .services import (
-    generate_unique_ticket_number,
-    calculate_fare,
-    get_next_available_trains,
+    NotFoundException,
+    InvalidInputException,
+    PermissionDeniedException,
 )
 from datetime import timedelta
 
@@ -36,52 +31,47 @@ class IsRegularUser(IsAuthenticated):
         return is_authenticated
 
 
-class BookingViewSet(viewsets.ModelViewSet):
+class BookingViewSet(UserFilterableQuerysetMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing bookings.
-    Supports CRUD operations and custom actions.
+    Supports CRUD operations and custom actions with optimized database hits.
     """
 
     queryset = Booking.objects.all()
     serializer_class = BookingSerializer
     permission_classes = [IsRegularUser]
-
-    def get_queryset(self):
-        """Return only the user's bookings, sorted by newest first"""
-        if self.request.user.is_staff or self.request.user.is_superuser:
-            return Booking.objects.all().order_by("-created_at")
-        return Booking.objects.filter(user=self.request.user).order_by("-created_at")
+    user_field = "user"  # Specify the user field
+    default_ordering = ["-created_at"]  # Specify default ordering
 
     def create(self, request, *args, **kwargs):
         """
-        Handles booking creation requests.
-        Validates and creates a new booking.
+        Handles booking creation requests with optimized database hits.
+        Uses centralized validators and helpers.
         """
-        if request.user.is_staff or request.user.is_superuser:
-            logger.warning(
-                f"Admin/staff user {request.user} attempted to create a booking."
-            )
-            return Response(
-                {"detail": "Admins and staff cannot create bookings."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        # Validate user authorization using centralized validator
+        BookingValidators.validate_user_authorized(request.user)
+        
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
 
         from_code = validated_data["from_station_code"].strip().upper()
         to_code = validated_data["to_station_code"].strip().upper()
-        from_station = Station.objects.get(code__iexact=from_code)
-        to_station = Station.objects.get(code__iexact=to_code)
+        
+        # Use centralized validator for station pair
+        from_station, to_station = BookingValidators.validate_station_pair(from_code, to_code)
 
-        # Calculate total fare
-        total_fare = calculate_fare(
+        # Use centralized helper for fare calculation
+        total_fare = BookingHelpers.calculate_fare(
             validated_data["class_type"], validated_data["num_of_passenegers"]
         )
-        ticket_number = generate_unique_ticket_number()
+        
+        # Use centralized helper for ticket generation
+        ticket_number = BookingHelpers.generate_unique_ticket_number()
 
         booking_time = timezone.now()
         expiry_time = booking_time + timedelta(hours=1)
+        
         booking = Booking.objects.create(
             user=request.user,
             from_station=from_station,
@@ -114,22 +104,19 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="check-availability")
     def check_availability(self, request):
-        """Check available trains for a route"""
+        """Check available trains for a route with optimized database hits"""
         from_station_code = request.query_params.get("from_station")
         to_station_code = request.query_params.get("to_station")
         class_type = request.query_params.get("class_type", "GENERAL")
 
         if not from_station_code or not to_station_code:
-            raise FromAndToStationsRequired()
+            raise InvalidInputException(BookingMessage.FROM_AND_TO_ARE_REQUIRED)
 
-        try:
-            from_station = Station.objects.get(code__iexact=from_station_code)
-            to_station = Station.objects.get(code__iexact=to_station_code)
-        except Station.DoesNotExist:
-            raise StationNotFoundException()
+        # Use centralized validator for station pair
+        from_station, to_station = BookingValidators.validate_station_pair(from_station_code, to_station_code)
 
-        # Get available trains
-        available_trains = get_next_available_trains(
+        # Use optimized helper for train availability
+        available_trains = BookingHelpers.get_next_available_trains_optimized(
             from_station, to_station, class_type
         )
 
@@ -145,24 +132,20 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         """
-        Lists all bookings.
-        Supports filtering and pagination.
+        Lists all bookings with optimized statistics query.
         """
         queryset = self.get_queryset()
         serializer = self.get_serializer(queryset, many=True)
 
-        # Add summary information
-        total_bookings = queryset.count()
-        pending_bookings = queryset.filter(booking_status="PENDING").count()
-        booked_tickets = queryset.filter(booking_status="BOOKED").count()
-        failed_bookings = queryset.filter(booking_status="FAILED").count()
+        # Use optimized helper for booking statistics
+        stats = BookingHelpers.get_booking_statistics_optimized(queryset)
 
         return Response(
             {
-                "total_bookings": total_bookings,
-                "pending_bookings": pending_bookings,
-                "booked_tickets": booked_tickets,
-                "failed_bookings": failed_bookings,
+                "total_bookings": stats["total_bookings"],
+                "pending_bookings": stats["pending_bookings"],
+                "booked_tickets": stats["booked_tickets"],
+                "failed_bookings": stats["failed_bookings"],
                 "bookings": serializer.data,
             }
         )
@@ -179,7 +162,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             logger.warning(
                 f"User {request.user} attempted to access booking {booking.id} belonging to {booking.user}"
             )
-            raise BookingUnauthorizedException()
+            raise PermissionDeniedException(BookingMessage.FORBIDDEN)
         serializer = self.get_serializer(booking)
         return Response(serializer.data)
 
@@ -195,37 +178,29 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="exchange")
     def exchange_ticket(self, request, pk=None):
-        """Exchange ticket - change destination station only"""
+        """Exchange ticket - change destination station only with optimized validation"""
         booking = self.get_object()
 
-        # Only allow exchange for BOOKED tickets
-        if booking.booking_status != "BOOKED":
-            raise OnlyBookedTicketsExchanged()
+        # Use centralized validator for booking exchange
+        BookingValidators.validate_booking_for_exchange(booking)
 
         # Get new destination station
         new_to_station_code = request.data.get("to_station_code")
         if not new_to_station_code:
-            raise NewToStationRequired()
+            raise InvalidInputException(BookingMessage.NEW_TO_STATION_REQUIRED)
 
-        try:
-            new_to_station = Station.objects.get(
-                code__iexact=new_to_station_code.strip()
-            )
-        except Station.DoesNotExist:
-            raise StationNotFoundException()
+        # Use centralized validator for station validation
+        new_to_station = BookingValidators.validate_station_pair(
+            booking.from_station.code, new_to_station_code.strip()
+        )[1]  # Get the second station (to_station)
 
-        # Validate that new destination is different from current
-        if booking.to_station == new_to_station:
-            raise FromAndToMustBeDifferent()
-
-        # Validate that new destination is different from source
-        if booking.from_station == new_to_station:
-            raise FromAndToMustBeDifferent()
+        # Use centralized validator for exchange destination
+        BookingValidators.validate_exchange_destination(booking, new_to_station)
 
         # Update the destination station
         old_destination = booking.to_station.name
         booking.to_station = new_to_station
-        booking.save()
+        booking.save(update_fields=['to_station'])
 
         logger.info(
             f"Ticket exchange: user={request.user}, booking_id={booking.id}, old_to={old_destination}, new_to={new_to_station.name}"

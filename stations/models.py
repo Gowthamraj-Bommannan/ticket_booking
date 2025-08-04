@@ -1,6 +1,6 @@
 from django.conf import settings
-from django.core.exceptions import ValidationError
 from django.db import models
+from utils.validators import StationValidators
 
 
 class ActiveManager(models.Manager):
@@ -13,14 +13,15 @@ class Station(models.Model):
     """
     Represents a railway station with code, city, state, and status.
     Supports soft delete via is_active.
+    Uses centralized validators for consistency.
     """
 
-    name = models.CharField(max_length=100)
-    code = models.CharField(max_length=5, unique=True)
-    city = models.CharField(max_length=100)
-    state = models.CharField(max_length=100)
+    name = models.CharField(max_length=100, db_index=True)
+    code = models.CharField(max_length=5, unique=True, db_index=True)
+    city = models.CharField(max_length=100, db_index=True)
+    state = models.CharField(max_length=100, db_index=True)
     is_active = models.BooleanField(
-        default=True, help_text="Indicates if the station is active or not"
+        default=True, help_text="Indicates if the station is active or not", db_index=True
     )
     station_master = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -31,7 +32,7 @@ class Station(models.Model):
         related_name="station",
         help_text="Assign a user with role=station_master and is_active=True",
     )
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     # Managers
@@ -41,38 +42,20 @@ class Station(models.Model):
     def clean(self):
         """
         Validates station code, uniqueness, and station master assignment.
+        Uses centralized validators for consistency.
         """
-        if not (2 <= len(self.code) <= 5):
-            raise ValidationError({"code": "Code must be 2-5 characters."})
-        if self.code != self.code.upper():
-            raise ValidationError({"code": "Code must be uppercase."})
-        if (
-            Station.all_objects.exclude(pk=self.pk)
-            .filter(code__iexact=self.code)
-            .exists()
-        ):
-            raise ValidationError(
-                {"code": "Station code must be unique (case-insensitive)."}
-            )
+        # Use centralized validators
+        if self.code:
+            self.code = StationValidators.validate_station_code(self.code, self.pk)
+        
+        if self.name:
+            self.name = StationValidators.validate_station_name(self.name, self.pk)
+        
+        # Validate station master assignment
         if self.station_master:
-            if not self.station_master.is_active:
-                raise ValidationError(
-                    {"station_master": "User must be active"}
-                )
-            if self.station_master.role != "station_master":
-                raise ValidationError(
-                    {"station_master": "User must have role=station_master."}
-                )
-            if (
-                Station.all_objects.exclude(pk=self.pk)
-                .filter(station_master=self.station_master)
-                .exists()
-            ):
-                raise ValidationError(
-                    {
-                        "station_master": "This user is already assigned as a station master to another station."
-                    }
-                )
+            StationValidators.validate_station_master_assignment(
+                self.station_master.id, self
+            )
 
     def save(self, *args, **kwargs):
         """
@@ -93,3 +76,8 @@ class Station(models.Model):
         verbose_name = "Station"
         verbose_name_plural = "Stations"
         ordering = ["code"]
+        indexes = [
+            models.Index(fields=['code', 'is_active']),
+            models.Index(fields=['city', 'state']),
+            models.Index(fields=['station_master', 'is_active']),
+        ]

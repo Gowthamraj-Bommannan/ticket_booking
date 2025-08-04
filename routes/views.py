@@ -1,17 +1,15 @@
 from rest_framework import viewsets, status
 from rest_framework.response import Response
-from rest_framework.permissions import BasePermission
 from .models import RouteEdge, RouteTemplate
 from stations.models import Station
 from .serializers import RouteEdgeSerializer, RouteTemplateSerializer
 from rest_framework.decorators import action
+from utils.permission_helpers import AdminOnlyPermissionMixin
+from utils.queryset_helpers import ActiveOnlyQuerysetMixin
+from utils.validators import RouteValidators
 from exceptions.handlers import (
-    RoutePermissionDeniedException,
-    StationNotFoundException,
-    RouteFromAndToSameException,
-    RouteInvalidDistanceException,
-    RouteAlreadyExistsException,
-    RouteStopsNotFoundException,
+    InvalidInputException,
+    NotFoundException,
 )
 from utils.constants import RouteMessage
 import logging
@@ -19,25 +17,8 @@ import heapq
 
 logger = logging.getLogger("routes")
 
-class IsAdminSuperUser(BasePermission):
-    """
-    Allows access to admin users.
-    """
 
-    def has_permission(self, request, view):
-        logger.info(
-            f"Checking IsAdminSuperUser permission for user: {request.user.username}"
-        )
-        permission_granted = bool(
-            request.user
-            and request.user.is_authenticated
-            and request.user.role == "admin"
-        )
-        logger.info(f"IsAdminSuperUser permission granted: {permission_granted}")
-        return permission_granted
-
-
-class RouteEdgeViewSet(viewsets.ModelViewSet):
+class RouteEdgeViewSet(AdminOnlyPermissionMixin, ActiveOnlyQuerysetMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing route edges.
     Supports CRUD operations and custom actions.
@@ -46,23 +27,11 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
     queryset = RouteEdge.objects.filter(is_active=True)
     serializer_class = RouteEdgeSerializer
 
-    def get_queryset(self):
-        """
-        Returns the queryset of active route edges.
-        """
-        qs = super().get_queryset()
-        return qs.filter(is_active=True)
-
     def create(self, request, *args, **kwargs):
         """
         Creates a new route edge.
         Validates and processes route edge data.
         """
-        if not IsAdminSuperUser().has_permission(request, self):
-            logger.error("You do not have permission to create route edges")
-            raise RoutePermissionDeniedException(
-                RouteMessage.ROUTE_EDGE_PERMISSION_DENIED
-            )
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
@@ -74,11 +43,6 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
         Updates a route edge.
         Validates and processes route edge data.
         """
-        if not IsAdminSuperUser().has_permission(request, self):
-            logger.error("You do not have permission to update route edges")
-            raise RoutePermissionDeniedException(
-                RouteMessage.ROUTE_EDGE_PERMISSION_DENIED
-            )
         partial = kwargs.pop("partial", False)
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
@@ -92,11 +56,6 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
         Deletes a route edge.
         Marks the edge as inactive.
         """
-        if not IsAdminSuperUser().has_permission(request, self):
-            logger.warn("You do not have permission to delete route edges")
-            raise RoutePermissionDeniedException(
-                RouteMessage.ROUTE_EDGE_PERMISSION_DENIED
-            )
         instance = self.get_object()
         instance.is_active = False
         instance.save()
@@ -109,7 +68,6 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
         Adds a new route edge between two stations.
         Validates and processes route edge data.
         """
-        self._check_admin_permission(request.user)
         from_station, to_station, distance, is_bidirectional = (
             self._validate_add_between_input(request.data)
         )
@@ -134,85 +92,50 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
         logger.info(f"New stop added successfully by {request.user.username}.")
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    def _check_admin_permission(self, user):
-        """
-        Checks if the user has admin permissions.
-        Raises error if not authorized.
-        """
-        if not (
-            user and user.is_authenticated and getattr(user, "role", None) == "admin"
-        ):
-            logger.warning(
-                f"User {getattr(user, 'username', 'Anonymous')} is not authorized to add route edges."
-            )
-            raise RoutePermissionDeniedException()
 
     def _validate_add_between_input(self, data):
         """
         Validates the input data for adding a route edge.
         Raises error if invalid.
         """
+        # Validate required fields
+        self._validate_required_fields(data, ["from_station", "to_station", "distance"])
+        
         from_code = data.get("from_station")
         to_code = data.get("to_station")
         distance = data.get("distance")
         is_bidirectional = data.get("is_bidirectional", True)
-        if not from_code or not to_code or distance is None:
-            logger.error(
-                "Missing required fields: from_station, to_station, or distance."
-            )
-            raise RouteInvalidDistanceException()
-        if from_code == to_code:
-            logger.error("from_station and to_station must be different.")
-            raise RouteFromAndToSameException()
-        try:
-            from_station = Station.objects.get(code=from_code)
-            to_station = Station.objects.get(code=to_code)
-        except Station.DoesNotExist:
-            logger.error(f"Station with code '{from_code}' or '{to_code}' not found.")
-            raise StationNotFoundException()
-        try:
-            distance = int(distance)
-        except (TypeError, ValueError):
-            logger.error("Distance must be a positive integer.")
-            raise RouteInvalidDistanceException()
-        if distance <= 0:
-            logger.error("Distance must be a positive integer.")
-            raise RouteInvalidDistanceException()
+        
+        # Use centralized validation - single query for both stations
+        from_station, to_station = RouteValidators.validate_station_pair(from_code, to_code)
+        
+        # Validate distance
+        distance = RouteValidators.validate_distance(distance)
+        
         return from_station, to_station, distance, is_bidirectional
+
+    def _validate_required_fields(self, data, required_fields):
+        """
+        Validates that all required fields are present.
+        
+        Args:
+            data (dict): Data to validate
+            required_fields (list): List of required field names
+            
+        Raises:
+            InvalidInputException: If any required field is missing
+        """
+        missing_fields = [field for field in required_fields if not data.get(field)]
+        if missing_fields:
+            logger.error(f"Missing required fields: {missing_fields}")
+            raise InvalidInputException(RouteMessage.ROUTE_EDGE_MISSING_FIELDS)
 
     def _check_existing_edges(self, from_station, to_station, is_bidirectional):
         """
         Checks if an edge already exists between the two stations.
         Raises error if it does.
         """
-        if is_bidirectional:
-            if (
-                RouteEdge.objects.filter(
-                    from_station=from_station,
-                    to_station=to_station,
-                    is_bidirectional=True,
-                    is_active=True,
-                ).exists()
-                or RouteEdge.objects.filter(
-                    from_station=to_station,
-                    to_station=from_station,
-                    is_bidirectional=True,
-                    is_active=True,
-                ).exists()
-            ):
-                logger.error(
-                    "A bidirectional edge between these stations already exists."
-                )
-                raise RouteAlreadyExistsException()
-        else:
-            if RouteEdge.objects.filter(
-                from_station=from_station,
-                to_station=to_station,
-                is_bidirectional=False,
-                is_active=True,
-            ).exists():
-                logger.error("A unidirectional edge in this direction already exists.")
-                raise RouteAlreadyExistsException()
+        RouteValidators.validate_edge_exists(from_station, to_station, is_bidirectional)
 
     def _split_existing_edge(
         self, from_station, to_station, distance, is_bidirectional
@@ -267,7 +190,7 @@ class RouteEdgeViewSet(viewsets.ModelViewSet):
         return new_edge
 
 
-class RouteTemplateViewSet(viewsets.ModelViewSet):
+class RouteTemplateViewSet(AdminOnlyPermissionMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing route templates.
     Supports CRUD operations and custom actions.
@@ -275,7 +198,6 @@ class RouteTemplateViewSet(viewsets.ModelViewSet):
 
     queryset = RouteTemplate.objects.all()
     serializer_class = RouteTemplateSerializer
-    permission_classes = [IsAdminSuperUser]
 
     def create(self, request, *args, **kwargs):
         """
@@ -298,7 +220,7 @@ class RouteTemplateViewSet(viewsets.ModelViewSet):
             stop_codes = validated_data["stops"]
             if len(stop_codes) < 3:
                 logger.warn("Train should have atleast one stop.(except from and to)")
-                raise RouteStopsNotFoundException()
+                raise NotFoundException(RouteMessage.ROUTE_EDGE_NO_STOPS)
         template = serializer.save(stops=stop_codes)
         template.stops = stop_codes
         template.save()
@@ -312,8 +234,11 @@ class RouteTemplateViewSet(viewsets.ModelViewSet):
         Computes the stops for a route between two stations.
         Uses Dijkstra's algorithm to find the shortest path.
         Returns a list of Station objects in the order of the route.
+        Optimized to reduce database hits.
         """
-        edges = RouteEdge.objects.filter(is_active=True)
+        # Single query with select_related to get all edges with station data
+        edges = RouteEdge.objects.filter(is_active=True).select_related('from_station', 'to_station')
+        
         graph = {}
         for edge in edges:
             graph.setdefault(edge.from_station_id, []).append(
@@ -323,21 +248,25 @@ class RouteTemplateViewSet(viewsets.ModelViewSet):
                 graph.setdefault(edge.to_station_id, []).append(
                     (edge.from_station_id, edge.distance)
                 )
+        
         queue = [(0, from_station.id, [from_station.id])]
         visited = set()
+        
         while queue:
             dist, current, path = heapq.heappop(queue)
             if current == to_station.id:
-                # Return list of Station objects in order
+                # Single query to get all stations in path
                 stations = Station.objects.filter(id__in=path)
                 # Preserve order
                 station_map = {s.id: s for s in stations}
                 return [station_map[pid] for pid in path]
+            
             if current in visited:
                 continue
             visited.add(current)
+            
             for neighbor, weight in graph.get(current, []):
                 if neighbor not in visited:
-                    heapq.heappush(queue, (dist + weight, neighbor,
-                                           path + [neighbor]))
+                    heapq.heappush(queue, (dist + weight, neighbor, path + [neighbor]))
+        
         return []

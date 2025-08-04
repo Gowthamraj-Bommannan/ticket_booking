@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
 from .models import User, StaffRequest
-from exceptions.handlers import InvalidCredentialsException
+from exceptions.handlers import UnauthorizedAccessException, InvalidInputException
 from utils.constants import UserMessage
 from utils.validators import UserFieldValidators
 from utils.serializer_helpers import (
@@ -130,14 +130,19 @@ class LoginSerializer(serializers.Serializer):
             ValidationError: If user account is inactive
         """
         user = authenticate(username=data["username"], password=data["password"])
+        if len(data["username"]) < 5:
+            logger.error(f"Login failed - Username too short: {data['username']}")
+            raise InvalidInputException(UserMessage.USERNAME_TOO_SHORT)
+        
         if not user:
             logger.error(
                 f"Login failed - Invalid credentials for username: {data['username']}"
             )
-            raise InvalidCredentialsException()
+            raise UnauthorizedAccessException(UserMessage.INVALID_CREDENTIALS)
         if not user.is_active:
             logger.error(f"Login failed - Inactive user: {user.username}")
             raise serializers.ValidationError(UserMessage.USER_INACTIVE)
+        
         logger.debug(f"User authenticated successfully: {user.username}")
         return {"user": user}
 
@@ -156,6 +161,18 @@ class ChangePasswordSerializer(serializers.Serializer):
 
     old_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True)
+
+    def validate_new_password(self, value):
+        """
+        Validates new password for password change.
+        """
+        if len(value) < 8:
+            logger.error(f"Password change failed - New password too short: {value}")
+            raise InvalidInputException(UserMessage.PASSWORD_TOO_SHORT)
+        if len(value) > 16:
+            logger.error(f"Password change failed - New password too long: {value}")
+            raise InvalidInputException(UserMessage.PASSWORD_TOO_LONG)
+        return value
 
 
 class UpdateProfileSerializer(serializers.ModelSerializer):

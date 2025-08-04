@@ -116,4 +116,52 @@ class IsOwnerOrAdmin(permissions.BasePermission):
 
 
 # Alias for backward compatibility - both classes are identical
-IsStationMasterOrAdmin = IsStaffOrAdmin 
+IsStationMasterOrAdmin = IsStaffOrAdmin
+
+
+# New Permission Mixins for Dynamic Permissions
+class DynamicPermissionMixin:
+    """
+    Mixin to provide dynamic permission handling based on actions.
+    Reduces code duplication across ViewSets.
+    """
+    
+    def get_permissions(self):
+        """
+        Returns appropriate permissions based on the action.
+        Override this method in subclasses to customize permission logic.
+        """
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            permission_classes = [IsAdminUser]
+        elif self.action in ["deactivate", "activate"]:
+            permission_classes = [IsStaffOrAdmin]
+        else:
+            permission_classes = [permissions.IsAuthenticated]
+        return [permission() for permission in permission_classes]
+
+
+class AdminOnlyPermissionMixin:
+    """
+    Mixin for views that require admin-only access for all actions.
+    """
+    
+    def get_permissions(self):
+        return [IsAdminUser()]
+
+
+class UserSpecificPermissionMixin:
+    """
+    Mixin for views that allow users to access only their own data.
+    """
+    
+    def get_permissions(self):
+        return [IsOwnerOrAdmin()]
+
+
+class StaffOrAdminPermissionMixin:
+    """
+    Mixin for views that allow both staff and admin access.
+    """
+    
+    def get_permissions(self):
+        return [IsStaffOrAdmin()] 

@@ -104,3 +104,25 @@ def get_registration_meta_fields():
         "first_name",
         "last_name",
     ] 
+
+
+class StationCodeRepresentationMixin:
+    """
+    Mixin for serializers that need to represent station objects as station codes.
+    Eliminates duplicate to_representation logic across route serializers.
+    """
+    
+    def to_representation(self, instance):
+        """
+        Converts station objects to station codes in representation.
+        
+        Args:
+            instance: Model instance with from_station and to_station fields
+            
+        Returns:
+            dict: Representation with station codes instead of station objects
+        """
+        rep = super().to_representation(instance)
+        rep["from_station"] = instance.from_station.code
+        rep["to_station"] = instance.to_station.code
+        return rep 

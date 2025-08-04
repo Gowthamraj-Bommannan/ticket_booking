@@ -1,156 +1,88 @@
-from django.shortcuts import render
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import BasePermission, IsAuthenticated
-from django.shortcuts import get_object_or_404
-from django.http import Http404
 from .models import Station
-from accounts.models import User
+from django.db.models import Q
 from .serializers import StationSerializer, AssignStationMasterSerializer
 from exceptions.handlers import (
-    StationNotFoundException,
-    StationAlreadyExistsException,
-    UnauthorizedAccessException,
-    StationMasterExistsException,
+    NotFoundException,
+    AlreadyExistsException,
 )
 from routes.models import RouteEdge
-from utils.constants import UserMessage
+from utils.permission_helpers import DynamicPermissionMixin
+from utils.queryset_helpers import FilterableQuerysetMixin
+from utils.validators import StationValidators
+from utils.constants import StationMessage
 import logging
 
 logger = logging.getLogger("stations")
 
-class IsAdminUser(BasePermission):
-    """
-    Allows access only to admin users.
-    """
-
-    def has_permission(self, request, view):
-        logger.info(f"Checking IsAdminUser permission for user: {request.user.id}")
-        is_allowed = bool(
-            request.user
-            and request.user.is_authenticated
-            and request.user.role == "admin"
-        )
-        logger.info(f"IsAdminUser permission check result: {is_allowed}")
-        return is_allowed
-
-
-class IsAdminOrStationMaster(BasePermission):
-    """
-    Allows access to admin users or station masters.
-    """
-
-    def has_permission(self, request, view):
-        logger.info(
-            f"Checking IsAdminOrStationMaster permission for user: {request.user.id}"
-        )
-        is_allowed = bool(
-            request.user
-            and request.user.is_authenticated
-            and request.user.role in ["admin", "station_master"]
-        )
-        logger.info(f"IsAdminOrStationMaster permission check result: {is_allowed}")
-        return is_allowed
-
-
-class StationViewSet(viewsets.ModelViewSet):
+class StationViewSet(DynamicPermissionMixin, FilterableQuerysetMixin,
+                     viewsets.ModelViewSet):
     """
     Provides CRUD and soft delete endpoints for stations.
+    Uses centralized validators for consistency and reduced code duplication.
     """
 
     queryset = Station.objects.all()
     serializer_class = StationSerializer
     lookup_field = "code"
-
-    def get_permissions(self):
-        """
-        Returns the appropriate permissions based on the action.
-        """
-        logger.info(f"Getting permissions for action: {self.action}")
-        if self.action in ["create", "update", "partial_update", "destroy"]:
-            permission_classes = [IsAdminUser]
-        elif self.action in ["deactivate", "activate"]:
-            permission_classes = [IsAdminOrStationMaster]
-        else:
-            permission_classes = [IsAuthenticated]
-        logger.info(
-            f"Permission classes for action {self.action}: "
-            f"{[p.__name__ for p in permission_classes]}"
-        )
-        return [permission() for permission in permission_classes]
+    filter_fields = ["city", "state"]
 
     def get_queryset(self):
         """
         Returns the queryset of stations, filtered by city/state if provided.
+        Optimized with select_related to prevent N+1 queries.
         """
         logger.info("Getting queryset for StationViewSet")
-        qs = super().get_queryset()
-        city = self.request.query_params.get("city")
-        state = self.request.query_params.get("state")
-        if city:
-            logger.info(f"Filtering by city: {city}")
-            qs = qs.filter(city__iexact=city)
-        if state:
-            logger.info(f"Filtering by state: {state}")
-            qs = qs.filter(state__iexact=state)
+        qs = super().get_queryset().select_related('station_master')
         logger.info(f"Final queryset count: {qs.count()}")
         return qs
 
     def get_object(self):
         """
         Retrieves a station, raising custom exceptions for inactive or missing stations.
+        Optimized with select_related to prevent additional queries.
         """
         logger.info(f"Attempting to get station with code: {self.kwargs.get('code')}")
         try:
-            station = Station.all_objects.get(code=self.kwargs["code"])
+            station = Station.all_objects.select_related('station_master').get(code=self.kwargs["code"])
             logger.info(
                 f"Successfully retrieved station: {station.name} ({station.code})"
             )
             return station
         except Station.DoesNotExist:
             logger.warning(f"Station with code {self.kwargs.get('code')} not found.")
-            raise StationNotFoundException()
+            raise NotFoundException(StationMessage.STATION_NOT_FOUND)
 
     @action(detail=True, methods=["post"], url_path="assign-master")
     def assign_master(self, request, code=None):
         """
         Assigns a station master to a station.
         Validates and processes station master data.
+        Uses centralized validators for consistency.
         """
         logger.info(f"Attempting to assign master for station with code: {code}")
         station = self.get_object()
+        
+        # Validate station is active for assignment
+        StationValidators.validate_station_active_for_operation(station, "assign master to")
+        
         serializer = AssignStationMasterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user_id = serializer.validated_data["user_id"]
-        user = get_object_or_404(User, id=user_id)
+        
+        # Use centralized validator for station master assignment
+        try:
+            user = StationValidators.validate_station_master_assignment(user_id, station)
+        except Exception as e:
+            logger.warning(f"Station master assignment validation failed: {str(e)}")
+            raise AlreadyExistsException(str(e))
+        
         logger.info(
             f"Attempting to validate user for assignment: {user.username} (ID: {user.id})"
         )
-        if not user.is_active:
-            logger.warning(
-                f"User {user.username} (ID: {user.id}) is not active. Cannot assign as station master."
-            )
-            raise NotFound(UserMessage.USER_NOT_FOUND)
-        if user.role != "station_master":
-            logger.warning(
-                f"User {user.username} (ID: {user.id}) does not have role=station_master"
-            )
-            raise UnauthorizedAccessException()
-        if (
-            hasattr(user, "station")
-            and user.station is not None
-            and user.station != station
-        ):
-            logger.warning(
-                f"User {user.username} (ID: {user.id}) is already assigned as station master to station {user.station.name} ({user.station.code})."
-            )
-            raise StationMasterExistsException()
-        if station.station_master and station.station_master != user:
-            logger.warning(
-                f"Station {station.name} ({station.code}) already has a different station master ({station.station_master.username})."
-            )
-            raise StationMasterExistsException()
+        
         station.station_master = user
         station.save()
         logger.info(
@@ -162,37 +94,42 @@ class StationViewSet(viewsets.ModelViewSet):
         """
         Soft deletes a station.
         Merges route edges if the station is a junction.
+        Optimized to reduce database hits and uses centralized validators.
         """
         code = kwargs.get("code")
         logger.info(f"Attempting to soft delete (deactivate) station with code: {code}")
         station = self.get_object()
-        if not station.is_active:
-            logger.warning(
-                f"Station {station.name} ({station.code}) is already inactive."
-            )
-            raise StationNotFoundException()
+        
+        # Validate station is active for deletion
+        StationValidators.validate_station_for_deletion(station)
 
-
-        incoming_edges = RouteEdge.objects.filter(to_station=station, is_active=True)
-        outgoing_edges = RouteEdge.objects.filter(from_station=station, is_active=True)
-        if incoming_edges.count() == 1 and outgoing_edges.count() == 1:
-            in_edge = incoming_edges.first()
-            out_edge = outgoing_edges.first()
-            # Deactivate both edges
-            in_edge.is_active = False
-            in_edge.save()
-            out_edge.is_active = False
-            out_edge.save()
+        # Single query to get all related edges
+        related_edges = RouteEdge.objects.filter(
+            Q(from_station=station) | Q(to_station=station),
+            is_active=True
+        ).select_related('from_station', 'to_station')
+        
+        incoming_edges = [edge for edge in related_edges if edge.to_station == station]
+        outgoing_edges = [edge for edge in related_edges if edge.from_station == station]
+        
+        if len(incoming_edges) == 1 and len(outgoing_edges) == 1:
+            in_edge = incoming_edges[0]
+            out_edge = outgoing_edges[0]
+            
+            # Bulk update to deactivate edges
+            edge_ids = [in_edge.id, out_edge.id]
+            RouteEdge.objects.filter(id__in=edge_ids).update(is_active=False)
+            
             logger.info(
                 f"Deactivated edges: {in_edge} and {out_edge} due to station removal."
             )
+            
             # Create new edge bypassing the removed station
             RouteEdge.objects.create(
                 from_station=in_edge.from_station,
                 to_station=out_edge.to_station,
                 distance=in_edge.distance + out_edge.distance,
-                is_bidirectional=in_edge.is_bidirectional and out_edge.
-                is_bidirectional,
+                is_bidirectional=in_edge.is_bidirectional and out_edge.is_bidirectional,
                 is_active=True,
             )
             logger.info(
@@ -216,15 +153,8 @@ class StationViewSet(viewsets.ModelViewSet):
         """
         Creates a new station.
         Validates and processes station data.
+        Optimized to remove redundant validation queries.
         """
         logger.info(f"Attempting to create station with data: {request.data}")
-        code = request.data.get("code")
-        name = request.data.get("name")
-        # Check for any existing station with the same code or name
-        if Station.all_objects.filter(code=code).exists():
-            logger.warning(f"Station with code {code} already exists.")
-            raise StationAlreadyExistsException()
-        if Station.all_objects.filter(name=name).exists():
-            logger.warning(f"Station with name {name} already exists.")
-            raise StationAlreadyExistsException()
+        # Model validation in full_clean() already handles duplicate checks
         return super().create(request, *args, **kwargs)

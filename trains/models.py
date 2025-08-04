@@ -1,6 +1,7 @@
 from django.db import models
 from routes.models import RouteTemplate
 import random
+from utils.constants import Choices
 
 
 class ActiveManager(models.Manager):
@@ -16,12 +17,16 @@ class Train(models.Model):
     Supports soft delete via is_active.
     """
 
-    TRAIN_TYPE_CHOICES = [("Local", "local"), ("Fast", "fast"), ("AC", "ac")]
-    train_number = models.CharField(max_length=10, unique=True, blank=True)
+    TRAIN_TYPE_CHOICES = Choices.TRAIN_TYPE_CHOICES
+    train_number = models.CharField(max_length=10, unique=True, blank=True, db_index=True)
     name = models.CharField(max_length=200)
-    train_type = models.CharField(max_length=20, choices=TRAIN_TYPE_CHOICES)
+    train_type = models.CharField(
+        max_length=20,
+        choices=Choices.TRAIN_TYPE_CHOICES,
+        db_index=True
+        )
     is_active = models.BooleanField(
-        default=True, help_text="Indicates if the train is active or soft deleted"
+        default=True, help_text="Indicates if the train is active or soft deleted", db_index=True
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -63,6 +68,11 @@ class Train(models.Model):
         verbose_name = "Train"
         verbose_name_plural = "Trains"
         ordering = ["train_number"]
+        indexes = [
+            models.Index(fields=['train_number', 'is_active']),
+            models.Index(fields=['train_type', 'is_active']),
+            models.Index(fields=['name', 'is_active']),
+        ]
 
 
 class TrainSchedule(models.Model):
@@ -72,15 +82,15 @@ class TrainSchedule(models.Model):
     Supports soft delete via is_active.
     """
 
-    train = models.ForeignKey(Train, on_delete=models.CASCADE, related_name="schedules")
-    route_template = models.ForeignKey(RouteTemplate, on_delete=models.CASCADE)
+    train = models.ForeignKey(Train, on_delete=models.CASCADE, related_name="schedules", db_index=True)
+    route_template = models.ForeignKey(RouteTemplate, on_delete=models.CASCADE, db_index=True)
     days_of_week = models.CharField(max_length=20)
-    start_time = models.TimeField()
+    start_time = models.TimeField(db_index=True)
     stops_with_time = models.JSONField(default=list, blank=True)
     direction = models.CharField(
-        max_length=10, choices=[("up", "Up"), ("down", "Down")]
+        max_length=10, choices=Choices.DIRECTION_CHOICES, db_index=True
     )
-    is_active = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -89,6 +99,13 @@ class TrainSchedule(models.Model):
         verbose_name = "Train Schedule"
         verbose_name_plural = "Train Schedules"
         ordering = ["train", "start_time"]
+        indexes = [
+            models.Index(fields=['train', 'is_active']),
+            models.Index(fields=['train', 'start_time', 'direction', 'is_active']),
+            models.Index(fields=['route_template', 'is_active']),
+            models.Index(fields=['days_of_week', 'is_active']),
+            models.Index(fields=['direction', 'is_active']),
+        ]
 
     def __str__(self):
         return f"{self.train} on {self.route_template} at {self.start_time}"
