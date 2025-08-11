@@ -88,3 +88,7 @@ class MethodNotAllowedException(APIException):
     status_code = status.HTTP_405_METHOD_NOT_ALLOWED
     default_code = "method_not_allowed"
 
+class TimeoutException(APIException):
+    status_code = status.HTTP_408_REQUEST_TIMEOUT
+    default_code = "timeout"
+

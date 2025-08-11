@@ -13,13 +13,6 @@ class StationSerializer(serializers.ModelSerializer):
         source="station_master.username", read_only=True
     )
 
-    def to_representation(self, instance):
-        return super().to_representation(instance)
-
-    def validate(self, data):
-        logger.debug(f"Validating station data: {data}")
-        return super().validate(data)
-
     class Meta:
         model = Station
         fields = ["id", "name", "code", "city", "state", "station_master_username"]

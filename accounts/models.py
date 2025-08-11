@@ -27,6 +27,40 @@ class Role(models.Model):
         return self.name
 
 
+class UserOTPVerification(models.Model):
+    """
+    Model for managing OTP verification during user registration.
+    
+    This model handles the complete OTP verification process including:
+    - OTP generation and storage
+    - Expiry time management
+    - Attempt tracking
+    - Verification status
+    """
+    email = models.EmailField()
+    otp_code = models.CharField(max_length=6)
+    expiry_time = models.DateTimeField()
+    attempt_count = models.IntegerField(default=0)
+    is_verified = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "otp_verification"
+    
+    def __str__(self):
+        """
+        Returns the OTP verification description as the string representation.
+        """
+        return f"OTP for {self.email} - {'Verified' if self.is_verified else 'Pending'}"
+    
+    @property
+    def is_expired(self):
+        """
+        Check if OTP has expired.
+        """
+        return timezone.now() > self.expiry_time
+
+
 class CustomUserManager(BaseUserManager):
     """
     Custom user manager that handles user creation without setting is_staff/is_superuser.
@@ -51,11 +85,7 @@ class CustomUserManager(BaseUserManager):
         """
         Create and save a superuser with the given username, email, and password.
         """
-        extra_fields.setdefault("role", "admin")
         extra_fields.setdefault("is_active", True)
-
-        if extra_fields.get("role") != "admin":
-            raise ValueError("Superuser must have role=admin.")
 
         return self.create_user(username, email, password, **extra_fields)
 
@@ -66,15 +96,16 @@ class User(AbstractUser):
 
     This model provides comprehensive user management including:
     - Extended user fields (email, mobile_number, role)
-    - Role-based access control with predefined choices
+    - Role-based access control with ForeignKey to Role model
     - Automatic staff and superuser status based on role
+    - Approval system for staff users
 
     Supports three main user types: admin, user, and station_master with
     appropriate permission levels for each role.
     """
     email = models.EmailField()
     mobile_number = models.CharField(max_length=15)
-    role = models.CharField(max_length=20, choices=Choices.ROLE_CHOICES, default="user")
+    role = models.ForeignKey(Role, on_delete=models.CASCADE, null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     last_login = models.DateTimeField(blank=True, null=True)
 
@@ -83,19 +114,26 @@ class User(AbstractUser):
 
     objects = CustomUserManager()
 
+    class Meta:
+        db_table = "users"
+
     @property
     def is_staff(self):
         """
         Returns True if user has staff privileges based on role.
         """
-        return self.role in ["admin", "station_master"]
+        if not self.role:
+            return False
+        return self.role.name in ["admin", "station_master"]
 
     @property
     def is_superuser(self):
         """
         Returns True if user has superuser privileges based on role.
         """
-        return self.role == "admin"
+        if not self.role:
+            return False
+        return self.role.name == "admin"
 
     def __str__(self):
         """
@@ -104,7 +142,8 @@ class User(AbstractUser):
         Returns:
             str: Username and role in format "username (role)"
         """
-        return f"{self.username} ({self.role})"
+        role_name = self.role.name if self.role else "No Role"
+        return f"{self.username} ({role_name})"
 
 
 class StaffRequest(models.Model):
@@ -119,7 +158,7 @@ class StaffRequest(models.Model):
     and supports the complete staff onboarding workflow.
     """
     user = models.OneToOneField(
-        User, on_delete=models.CASCADE, related_name="staff_request"
+       User, on_delete=models.CASCADE, related_name="staff_request"
     )
     status = models.CharField(max_length=20, choices=Choices.STATUS_CHOICES, default="pending")
     requested_at = models.DateTimeField(auto_now_add=True)
@@ -132,6 +171,9 @@ class StaffRequest(models.Model):
         related_name="processed_requests",
     )
     notes = models.TextField(blank=True)
+
+    class Meta:
+        db_table = "staff_requests"
 
     def __str__(self):
         """

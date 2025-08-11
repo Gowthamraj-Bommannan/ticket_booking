@@ -125,4 +125,4 @@ class StationCodeRepresentationMixin:
         rep = super().to_representation(instance)
         rep["from_station"] = instance.from_station.code
         rep["to_station"] = instance.to_station.code
-        return rep 
+        return rep

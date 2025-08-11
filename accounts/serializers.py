@@ -1,87 +1,104 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
-from .models import User, StaffRequest
-from exceptions.handlers import UnauthorizedAccessException, InvalidInputException
-from utils.constants import UserMessage
+from django.contrib.auth.password_validation import validate_password
+from .models import User, StaffRequest, Role, UserOTPVerification
+from utils.constants import UserMessage, AlreadyExistsMessage
 from utils.validators import UserFieldValidators
-from utils.serializer_helpers import (
-    RegistrationFieldMixin,
-    RegistrationValidationMixin,
-    get_registration_meta_fields,
-)
-import logging
+from exceptions.handlers import InvalidInputException
 
-logger = logging.getLogger("accounts")
+class RoleSerializer(serializers.ModelSerializer):
+    """Serializer for Role model."""
+    
+    class Meta:
+        model = Role
+        fields = ['id', 'name', 'description']
 
 
-class RegisterSerializer(RegistrationFieldMixin, RegistrationValidationMixin, serializers.ModelSerializer):
+class RegistrationSerializer(serializers.ModelSerializer):
     """
-    Serializer for user registration validation.
-
-    This serializer handles validation for user registration including:
+    Unified serializer for both user and staff registration.
+    
+    This serializer handles validation for unified registration including:
     - Data validation for all registration fields
     - Duplicate email and mobile number checking
     - Field format and constraint validation
-
-    Provides comprehensive validation for user registration data.
+    - Role-based registration logic
     """
+    role_id = serializers.IntegerField(required=True, help_text="Role ID from the Role table")
+    password = serializers.CharField(write_only=True, min_length=8)
 
     class Meta:
         model = User
-        fields = get_registration_meta_fields()
+        fields = [
+            'username', 'email', 'mobile_number', 'password',
+            'first_name', 'last_name', 'role_id'
+        ]
 
     def validate_email(self, value):
         """
-        Validates email uniqueness for user registration.
+        Validates email uniqueness for unified registration.
         """
-        return super().validate_email(value, "registration")
+        return UserFieldValidators.validate_email_uniqueness(value)
 
     def validate_mobile_number(self, value):
         """
-        Validates mobile number format and uniqueness for user registration.
+        Validates mobile number format and uniqueness for unified registration.
         """
-        return super().validate_mobile_number(value, "registration")
+        if not value.isdigit() or len(value) < 10:
+            raise InvalidInputException(UserMessage.MOBILE_NUMBER_INVALID)
+        
+        return UserFieldValidators.validate_mobile_number_uniqueness(value)
     
     def validate_username(self, value):
         """
-        Validates username format and uniqueness for user registration.
+        Validates username format and uniqueness for unified registration.
         """
-        return super().validate_username(value, "registration")
+        if len(value) < 5:
+            raise InvalidInputException(UserMessage.USERNAME_TOO_SHORT)
+        
+        return UserFieldValidators.validate_username_uniqueness(value)
+
+    def validate_role_id(self, value):
+        """
+        Validates that the role_id exists and is valid.
+        """
+        try:
+            role = Role.objects.get(id=value)
+            if role.name == "admin":
+                raise InvalidInputException(UserMessage.ADMIN_ROLE_REGISTRATION_NOT_ALLOWED)
+            return value
+        except Role.DoesNotExist:
+            raise InvalidInputException(UserMessage.ROLE_NOT_FOUND)
+
+    def validate(self, data):
+        """
+        Validates password confirmation.
+        """
+        password = data.get('password')
+        confirm_password = data.get('confirm_password')
+        
+        if password and confirm_password and password != confirm_password:
+            raise InvalidInputException(UserMessage.PASSWORD_NOT_MATCH)
+        
+        return data
 
 
-class StaffRegisterSerializer(RegistrationFieldMixin, RegistrationValidationMixin, serializers.ModelSerializer):
+class OTPValidationSerializer(serializers.Serializer):
     """
-    Serializer for staff registration validation.
-
-    This serializer handles validation for staff registration including:
-    - Data validation for all registration fields
-    - Duplicate email and mobile number checking
-    - Field format and constraint validation
-
-    Provides comprehensive validation for staff registration data.
+    Serializer for OTP validation.
     """
+    email = serializers.EmailField()
+    otp_code = serializers.CharField(max_length=6, min_length=6)
 
+
+class UserOTPVerificationSerializer(serializers.ModelSerializer):
+    """
+    Serializer for UserOTPVerification model.
+    """
     class Meta:
-        model = User
-        fields = get_registration_meta_fields()
-
-    def validate_email(self, value):
-        """
-        Validates email uniqueness for staff registration.
-        """
-        return super().validate_email(value, "staff_registration")
-
-    def validate_mobile_number(self, value):
-        """
-        Validates mobile number format and uniqueness for staff registration.
-        """
-        return super().validate_mobile_number(value, "staff_registration")
-    
-    def validate_username(self, value):
-        """
-        Validates username format and uniqueness for staff registration.
-        """
-        return super().validate_username(value, "staff_registration")
+        model = UserOTPVerification
+        fields = ['email', 'otp_code', 'expiry_time', 'attempt_count', 'is_verified', 'created_at']
+        read_only_fields = ['expiry_time', 'attempt_count', 'is_verified', 'created_at']
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -95,10 +112,22 @@ class UserSerializer(serializers.ModelSerializer):
 
     Used for profile display, user data in responses, and general user information.
     """
+    role = RoleSerializer(read_only=True)
 
     class Meta:
         model = User
-        fields = ["id", "username", "email", "first_name", "role"]
+        fields = [
+            "id",
+            "username",
+            "email",
+            "mobile_number",
+            "first_name",
+            "last_name",
+            "role",
+            "is_active",
+            "created_at",
+            "last_login",
+        ]
         read_only_fields = ["role", "created_at", "last_login", "is_active"]
 
 
@@ -120,31 +149,40 @@ class LoginSerializer(serializers.Serializer):
 
     def validate(self, data):
         """
-        Validates user credentials and account status for login.
+        Validates user authentication credentials.
 
-        Authenticates user using provided username and password, checks
-        if user account is active, and returns user object for successful login.
+        Performs comprehensive authentication validation including:
+        - User existence and credential verification
+        - Account status validation (active/inactive)
+        - Custom error messages for different failure scenarios
+
+        Args:
+            data: Dictionary containing username and password
+
+        Returns:
+            dict: Validated data with authenticated user object
 
         Raises:
-            InvalidCredentialsException: If username/password combination is invalid
-            ValidationError: If user account is inactive
+            serializers.ValidationError: For authentication failures
         """
-        user = authenticate(username=data["username"], password=data["password"])
-        if len(data["username"]) < 5:
-            logger.error(f"Login failed - Username too short: {data['username']}")
-            raise InvalidInputException(UserMessage.USERNAME_TOO_SHORT)
-        
-        if not user:
-            logger.error(
-                f"Login failed - Invalid credentials for username: {data['username']}"
+        username = data.get("username")
+        password = data.get("password")
+
+        if username and password:
+            user = authenticate(username=username, password=password)
+            if user:
+                if not user.is_active:
+                    raise InvalidInputException(UserMessage.INVALID_CREDENTIALS)
+                data["user"] = user
+                return data
+            else:
+                raise serializers.ValidationError(
+                    UserMessage.INVALID_CREDENTIALS
+                )
+        else:
+            raise serializers.ValidationError(
+                UserMessage.INVALID_CREDENTIALS
             )
-            raise UnauthorizedAccessException(UserMessage.INVALID_CREDENTIALS)
-        if not user.is_active:
-            logger.error(f"Login failed - Inactive user: {user.username}")
-            raise serializers.ValidationError(UserMessage.USER_INACTIVE)
-        
-        logger.debug(f"User authenticated successfully: {user.username}")
-        return {"user": user}
 
 
 class ChangePasswordSerializer(serializers.Serializer):
@@ -164,28 +202,34 @@ class ChangePasswordSerializer(serializers.Serializer):
 
     def validate_new_password(self, value):
         """
-        Validates new password for password change.
+        Validates new password using Django's password validators.
+
+        Ensures password meets security requirements and provides
+        appropriate error messages for validation failures.
+
+        Args:
+            value: New password string
+
+        Returns:
+            str: Validated password
+
+        Raises:
+            serializers.ValidationError: For password validation failures
         """
-        if len(value) < 8:
-            logger.error(f"Password change failed - New password too short: {value}")
-            raise InvalidInputException(UserMessage.PASSWORD_TOO_SHORT)
-        if len(value) > 16:
-            logger.error(f"Password change failed - New password too long: {value}")
-            raise InvalidInputException(UserMessage.PASSWORD_TOO_LONG)
+        validate_password(value)
         return value
 
 
 class UpdateProfileSerializer(serializers.ModelSerializer):
     """
-    Serializer for user profile updates with duplicate checking.
+    Serializer for user profile updates.
 
     This serializer handles profile update functionality including:
-    - Profile field updates (first_name, last_name, email, mobile_number)
-    - Duplicate email and mobile number validation
-    - User-specific validation (excluding current user from duplicate checks)
-    - Partial updates support
+    - Partial updates for profile fields
+    - Unique constraint validation for email and mobile number
+    - Field format validation
 
-    Ensures data integrity while allowing flexible profile updates.
+    Provides secure profile update capability with proper validation.
     """
 
     class Meta:
@@ -195,16 +239,38 @@ class UpdateProfileSerializer(serializers.ModelSerializer):
     def validate_email(self, value):
         """
         Validates email uniqueness for profile updates.
+
+        Ensures email is unique across all users except the current user
+        being updated.
+
+        Args:
+            value: Email address to validate
+
+        Returns:
+            str: Validated email address
+
+        Raises:
+            serializers.ValidationError: For duplicate email addresses
         """
-        user = self.context["request"].user
-        return UserFieldValidators.validate_email_uniqueness(value, "profile_update", user)
+        return UserFieldValidators.validate_email_uniqueness(value)
 
     def validate_mobile_number(self, value):
         """
         Validates mobile number uniqueness for profile updates.
+
+        Ensures mobile number is unique across all users except the current user
+        being updated.
+
+        Args:
+            value: Mobile number to validate
+
+        Returns:
+            str: Validated mobile number
+
+        Raises:
+            serializers.ValidationError: For duplicate mobile numbers
         """
-        user = self.context["request"].user
-        return UserFieldValidators.validate_mobile_number_uniqueness(value, "profile_update", user)
+        return UserFieldValidators.validate_mobile_number_uniqueness(value)
 
 
 class StaffRequestSerializer(serializers.ModelSerializer):
@@ -237,14 +303,14 @@ class StaffRequestSerializer(serializers.ModelSerializer):
 
 class StaffRequestApprovalSerializer(serializers.ModelSerializer):
     """
-    Serializer for staff request approval and rejection operations.
+    Serializer for staff request approval operations.
 
-    This serializer handles staff request processing including:
-    - Status updates (approved/rejected)
-    - Processing notes and comments
-    - Field validation for approval operations
+    This serializer handles staff request approval functionality including:
+    - Status field for approval/rejection
+    - Notes field for admin comments
+    - Validation for status transitions
 
-    Used by admin users to approve or reject staff registration requests.
+    Used for admin approval and rejection operations.
     """
 
     class Meta:

@@ -1,7 +1,5 @@
 from django.urls import path
 from .views import (
-    RegisterView,
-    StaffRegisterView,
     LoginView,
     LogoutView,
     ProfileView,
@@ -13,22 +11,26 @@ from .views import (
     ApproveAllStaffRequestsView,
     RejectAllStaffRequestsView,
     user_tickets,
+    UnifiedRegistrationView,
+    OTPValidationView,
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 
 urlpatterns = [
+    # Unified Registration System
+    path("api/auth/register/", UnifiedRegistrationView.as_view(), name="register-unified"),
+    path("api/auth/validate-otp/", OTPValidationView.as_view(), name="validate-otp"),
+    
     # User Authentication
-    path("api/auth/register/", RegisterView.as_view(), name="register"),
-    path(
-        "api/auth/register-staff/", StaffRegisterView.as_view(), name="register-staff"
-    ),
     path("api/auth/login/", LoginView.as_view(), name="login"),
     path("api/auth/logout/", LogoutView.as_view(), name="logout"),
     path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+    
     # User Profile Management
     path("api/profile/", ProfileView.as_view(), name="profile"),
     path("api/profile/change-password/", ChangePasswordView.as_view(), name="change-password"),
     path("api/user/tickets/", user_tickets, name="user-tickets"),
+    
     # Admin Staff Approval Panel
     path(
         "api/admin/staff-requests/",

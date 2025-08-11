@@ -3,7 +3,7 @@ from django.core.exceptions import ValidationError
 from exceptions.handlers import AlreadyExistsException
 from utils.constants import (
     AlreadyExistsMessage, UserMessage, StationMessage, 
-    RouteMessage, TrainMessage)
+    RouteMessage, TrainMessage, PaymentMessage, BookingMessage)
 from exceptions.handlers import (
     PermissionDeniedException, NotFoundException, InvalidInputException)
 import logging
@@ -280,55 +280,6 @@ class StationValidators:
         except Station.DoesNotExist:
             logger.warning(f"Station with code {code} not found.")
             raise NotFoundException(StationMessage.STATION_NOT_FOUND)
-
-
-class StationMasterValidators:
-    """
-    Specific validation logic for station master operations.
-    """
-    
-    @staticmethod
-    def validate_user_eligible_for_station_master(user_id):
-        """
-        Validates that a user is eligible to be assigned as a station master.
-        
-        Args:
-            user_id (int): User ID to validate
-            
-        Returns:
-            User: Validated user object
-            
-        Raises:
-            NotFoundException: If user not found or not eligible
-        """
-        try:
-            user = User.objects.get(
-                id=user_id,
-                is_active=True,
-                role="station_master"
-            )
-            return user
-        except User.DoesNotExist:
-            logger.warning(f"User {user_id} not found or not eligible as station master.")
-            raise NotFoundException(UserMessage.MASTER_NOT_FOUND)
-    
-    @staticmethod
-    def validate_station_master_unassigned(user):
-        """
-        Validates that a user is not already assigned as a station master.
-        
-        Args:
-            user (User): User to validate
-            
-        Raises:
-            AlreadyExistsException: If user is already assigned
-        """
-        if hasattr(user, "station") and user.station is not None:
-            logger.warning(
-                f"User {user.username} (ID: {user.id}) is already assigned"
-                f"station master to station {user.station.name} ({user.station.code})."
-            )
-            raise AlreadyExistsException(UserMessage.MASTER_ALREADY_ASSIGNED)
 
 
 class RouteValidators:

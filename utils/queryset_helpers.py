@@ -96,9 +96,3 @@ class SearchableQuerysetMixin:
                 qs = qs.filter(q_objects)
         
         return qs
-
-
-class UserFilterableQuerysetMixin(UserSpecificQuerysetMixin, FilterableQuerysetMixin, OrderedQuerysetMixin):
-    """
-    Combined mixin for user-specific views with filtering and ordering.
-    """

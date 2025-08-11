@@ -7,7 +7,10 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import Booking
 from .serializers import BookingSerializer
-from utils.queryset_helpers import UserFilterableQuerysetMixin
+from utils.queryset_helpers import (UserSpecificQuerysetMixin,
+                                    OrderedQuerysetMixin,
+                                    FilterableQuerysetMixin
+                                    )
 from utils.validators import BookingValidators
 from utils.booking_helpers import BookingHelpers
 from utils.constants import BookingMessage, StationMessage
@@ -31,7 +34,7 @@ class IsRegularUser(IsAuthenticated):
         return is_authenticated
 
 
-class BookingViewSet(UserFilterableQuerysetMixin, viewsets.ModelViewSet):
+class BookingViewSet(UserSpecificQuerysetMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing bookings.
     Supports CRUD operations and custom actions with optimized database hits.
@@ -87,7 +90,8 @@ class BookingViewSet(UserFilterableQuerysetMixin, viewsets.ModelViewSet):
         )
 
         logger.info(
-            f"Booking created: user={request.user}, from={from_code}, to={to_code}, class={validated_data['class_type']}, num={validated_data['num_of_passenegers']}, ticket={ticket_number}"
+            f"Booking created: user={request.user}, from={from_code}, to={to_code},"
+            f"class={validated_data['class_type']}, num={validated_data['num_of_passenegers']}, ticket={ticket_number}"
         )
 
         response_serializer = self.get_serializer(booking)
